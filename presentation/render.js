@@ -5,6 +5,7 @@
  *   node render.js stills <dossier> <t1,t2,...>     -> captures PNG à des instants donnés
  *   node render.js video  <sortie.mp4> [--workers 3] [--crf 23]
  *   node render.js mux    <sortie.mp4> [--crf 23]       -> ré-encode seulement (images déjà rendues)
+ *   node render.js patch  <t0> <t1> <sortie.mp4>        -> re-rend l'intervalle [t0, t1] s puis ré-encode
  */
 const { chromium } = require('playwright');
 const { spawn, execFileSync } = require('child_process');
@@ -89,6 +90,25 @@ async function video(outFile, workers, crf) {
   console.log(`Vidéo prête : ${outFile} (${((Date.now() - t0) / 60000).toFixed(1)} min)`);
 }
 
+// Re-rend seulement l'intervalle [t0, t1] (en secondes) et le remplace dans video_silent.mp4.
+async function patch(t0, t1) {
+  const N = Math.ceil(timeline.duration * FPS);
+  const f0 = Math.max(0, Math.floor(t0 * FPS)), f1 = Math.min(N, Math.ceil(t1 * FPS));
+  console.log(`Re-rendu des images ${f0} à ${f1 - 1}…`);
+  const seg = await renderChunk('patch', f0, f1, () => {});
+  const silent = path.join(BUILD, 'video_silent.mp4');
+  const parts = [], labels = [];
+  let fc = '[0:v]split=2[o1][o2];';
+  if (f0 > 0) { fc += `[o1]trim=end_frame=${f0},setpts=PTS-STARTPTS[a];`; labels.push('[a]'); } else fc += '[o1]nullsink;';
+  fc += '[1:v]setpts=PTS-STARTPTS[b];'; labels.push('[b]');
+  if (f1 < N) { fc += `[o2]trim=start_frame=${f1},setpts=PTS-STARTPTS[c];`; labels.push('[c]'); } else fc += '[o2]nullsink;';
+  fc += `${labels.join('')}concat=n=${labels.length}:v=1:a=0[v]`;
+  const tmp = path.join(BUILD, 'video_silent_patched.mp4');
+  execFileSync('ffmpeg', ['-y', '-v', 'error', '-i', silent, '-i', seg, '-filter_complex', fc, '-map', '[v]',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '14', '-pix_fmt', 'yuv420p', '-r', String(FPS), tmp], { stdio: 'inherit' });
+  fs.renameSync(tmp, silent);
+}
+
 // Encodage final (H.264 « slow ») + audio AAC + piste de sous-titres activable.
 function mux(outFile, crf) {
   const silent = path.join(BUILD, 'video_silent.mp4');
@@ -107,6 +127,9 @@ function mux(outFile, crf) {
     await stills(process.argv[3], process.argv[4].split(',').map(Number));
   } else if (mode === 'video') {
     await video(path.resolve(process.argv[3]), +arg('--workers', 3), +arg('--crf', 23));
+  } else if (mode === 'patch') {
+    await patch(+process.argv[3], +process.argv[4]);
+    mux(path.resolve(process.argv[5]), +arg('--crf', 23));
   } else if (mode === 'mux') {
     mux(path.resolve(process.argv[3]), +arg('--crf', 23));
   } else {

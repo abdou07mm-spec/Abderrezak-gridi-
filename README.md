@@ -2,6 +2,8 @@
 
 Présentation vidéo d'environ 6 minutes, en 1080p, avec une voix off en français.
 
+**Réalisé par : Touba Hamidi**
+
 <div dir="rtl">
 
 **عرض تقديمي على شكل فيديو بتعليق صوتي بالفرنسية حول موضوع «الذكاء الاصطناعي بين التقدم والتحديات».**
@@ -42,7 +44,13 @@ Outils nécessaires : Python 3, Node.js avec Playwright (Chromium), ffmpeg et un
 - `slides.html` contient le design des 16 diapositives et un moteur d'animation déterministe. Chaque élément apparaît au moment où la voix l'évoque.
 - `render.js` capture chaque image avec Chromium, l'encode en H.264 avec ffmpeg, puis assemble la vidéo, l'audio et les sous-titres.
 
-Pour ajouter le nom du présentateur sur la diapositive de titre, renseignez le champ `"presenter"` dans `scenes.json`.
+Le nom affiché sur la diapositive de titre (« Réalisé par : Touba Hamidi ») se règle avec les champs `"presenter"` et `"presenterLabel"` de `scenes.json`.
+
+Pour une modification qui ne touche qu'une diapositive, sans changer la narration, on peut re-rendre seulement l'intervalle concerné (en secondes) au lieu de toute la vidéo :
+
+```bash
+node render.js patch 0 14.6 ../output/IA_entre_progres_et_defis.mp4
+```
 
 ## Sources des chiffres cités
 

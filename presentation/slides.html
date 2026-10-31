@@ -107,6 +107,9 @@
     -webkit-background-clip: text; background-clip: text; color: transparent; padding-bottom: 8px; }
   .t-line { margin-top: 48px; display: flex; align-items: center; gap: 24px; font-size: 26px; color: var(--muted); }
   .t-line b { width: 120px; height: 2px; background: linear-gradient(90deg, #4fd1ff, transparent); }
+  .t-line .by { display: flex; flex-direction: column; gap: 8px; }
+  .t-line .by small { font-size: 21px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--faint); }
+  .t-line .by strong { font-family: "Inter Display", "Inter"; font-size: 40px; font-weight: 700; letter-spacing: -.01em; color: var(--text); }
   .orb { position: absolute; right: -60px; top: 60px; width: 800px; height: 800px; }
 
   /* ---- programme ---- */
@@ -292,7 +295,9 @@ const LAYOUTS = {
       <div class="pill"${A(-1, 'up', 0)}><i></i>${fr(s.kicker)}</div>
       <h1 class="t"${A(-1, 'up', .25)}>${fr(s.heading).replace(' ', '<br>')}</h1>
       <div class="t-sub"${A(-1, 'up', .55)}>${fr(s.subheading)}</div>
-      <div class="t-line"${A('2', 'up', 0)}><b></b>${fr(META.presenter || 'Une présentation commentée')}</div>
+      ${META.presenter
+        ? `<div class="t-line"${A(-1, 'up', .9)}><b></b><div class="by"><small>${fr(META.presenterLabel || 'Réalisé par')}</small><strong>${fr(META.presenter)}</strong></div></div>`
+        : `<div class="t-line"${A('2', 'up', 0)}><b></b>${fr('Une présentation commentée')}</div>`}
     </div>
     <div style="position:absolute;inset:0"${A(-1, 'scale', .1)}>${orbSVG()}</div>`,
 
