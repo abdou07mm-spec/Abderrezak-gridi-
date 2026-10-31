@@ -1,0 +1,686 @@
+{
+  "meta": {
+    "title": "L'intelligence artificielle : entre progrès et défis",
+    "voice": "fr-FR-HenriNeural",
+    "rate": "-2%",
+    "presenter": ""
+  },
+  "scenes": [
+    {
+      "id": "titre",
+      "layout": "title",
+      "theme": "neutral",
+      "section": "",
+      "kicker": "Présentation",
+      "heading": "L'intelligence artificielle",
+      "subheading": "entre progrès et défis",
+      "beats": [
+        {
+          "text": "Bonjour à toutes et à tous."
+        },
+        {
+          "text": "Aujourd'hui, nous allons parler d'une technologie qui transforme profondément notre monde : l'intelligence artificielle."
+        },
+        {
+          "text": "Une révolution porteuse d'immenses progrès, mais aussi de défis majeurs."
+        }
+      ]
+    },
+    {
+      "id": "plan",
+      "layout": "agenda",
+      "theme": "neutral",
+      "section": "Introduction",
+      "heading": "Au programme",
+      "items": [
+        {
+          "num": "01",
+          "label": "Comprendre l'IA",
+          "text": "Définition et grandes étapes",
+          "at": 1
+        },
+        {
+          "num": "02",
+          "label": "Les progrès",
+          "text": "Santé, économie, planète",
+          "at": 2,
+          "tone": "progress"
+        },
+        {
+          "num": "03",
+          "label": "Les défis",
+          "text": "Emploi, éthique, confiance, environnement",
+          "at": 3,
+          "tone": "challenge"
+        },
+        {
+          "num": "04",
+          "label": "Quel avenir ?",
+          "text": "Encadrer l'IA et la mettre au service de l'humain",
+          "at": 4
+        }
+      ],
+      "beats": [
+        {
+          "text": "Notre présentation se déroulera en quatre temps."
+        },
+        {
+          "text": "D'abord, nous verrons ce qu'est l'intelligence artificielle et d'où elle vient."
+        },
+        {
+          "text": "Ensuite, nous explorerons les progrès qu'elle apporte,"
+        },
+        {
+          "text": "puis les défis qu'elle soulève."
+        },
+        {
+          "text": "Enfin, nous nous demanderons comment construire un avenir où l'IA reste au service de l'humain."
+        }
+      ]
+    },
+    {
+      "id": "definition",
+      "layout": "definition",
+      "theme": "neutral",
+      "section": "01 · Comprendre l'IA",
+      "heading": "Qu'est-ce que l'IA ?",
+      "definition": "Des systèmes informatiques capables d'accomplir des tâches qui exigent habituellement l'intelligence humaine.",
+      "chips": [
+        "Percevoir",
+        "Raisonner",
+        "Apprendre",
+        "Créer"
+      ],
+      "circles": [
+        {
+          "label": "Intelligence artificielle",
+          "at": 0
+        },
+        {
+          "label": "Apprentissage automatique",
+          "at": 1
+        },
+        {
+          "label": "Apprentissage profond",
+          "at": 2
+        },
+        {
+          "label": "IA générative",
+          "at": 3
+        }
+      ],
+      "beats": [
+        {
+          "text": "L'intelligence artificielle désigne des systèmes informatiques capables d'accomplir des tâches qui exigent habituellement l'intelligence humaine : percevoir, raisonner, apprendre, ou encore créer."
+        },
+        {
+          "text": "Au cœur de l'IA moderne se trouve l'apprentissage automatique : au lieu d'être programmée règle par règle, la machine apprend à partir de données."
+        },
+        {
+          "text": "L'apprentissage profond utilise des réseaux de neurones artificiels à plusieurs couches, lointainement inspirés du cerveau."
+        },
+        {
+          "text": "Et l'IA générative, la plus récente, sait produire du texte, des images, du son ou du code."
+        }
+      ]
+    },
+    {
+      "id": "histoire",
+      "layout": "timeline",
+      "theme": "neutral",
+      "section": "01 · Comprendre l'IA",
+      "heading": "Une brève histoire",
+      "events": [
+        {
+          "year": "1956",
+          "text": "Conférence de Dartmouth : naissance du terme « intelligence artificielle »",
+          "at": 0
+        },
+        {
+          "year": "1997",
+          "text": "Deep Blue bat le champion du monde d'échecs Garry Kasparov",
+          "at": 1
+        },
+        {
+          "year": "2012",
+          "text": "Percée de l'apprentissage profond en reconnaissance d'images",
+          "at": 2
+        },
+        {
+          "year": "2016",
+          "text": "AlphaGo bat le champion Lee Sedol au jeu de go",
+          "at": 3
+        },
+        {
+          "year": "2017",
+          "text": "L'architecture « Transformer », base des grands modèles de langage",
+          "at": 4
+        },
+        {
+          "year": "2022",
+          "text": "L'IA générative conversationnelle s'ouvre au grand public",
+          "at": 5
+        }
+      ],
+      "beats": [
+        {
+          "text": "L'histoire de l'IA commence officiellement en 1956, lors de la conférence de Dartmouth, aux États-Unis, où le terme « intelligence artificielle » est adopté.",
+          "say": "L'histoire de l'IA commence officiellement en mille neuf cent cinquante-six, lors de la conférence de Dartmouth, aux États-Unis, où le terme « intelligence artificielle » est adopté."
+        },
+        {
+          "text": "En 1997, l'ordinateur Deep Blue d'IBM bat le champion du monde d'échecs Garry Kasparov.",
+          "say": "En mille neuf cent quatre-vingt-dix-sept, l'ordinateur Deep Blue d'IBM bat le champion du monde d'échecs Garry Kasparov."
+        },
+        {
+          "text": "À partir de 2012, l'apprentissage profond provoque une véritable percée dans la reconnaissance d'images."
+        },
+        {
+          "text": "En 2016, AlphaGo triomphe au jeu de go, réputé bien plus complexe que les échecs."
+        },
+        {
+          "text": "En 2017, l'architecture « Transformer » ouvre la voie aux grands modèles de langage.",
+          "say": "En 2017, l'architecture dite « Transformeur » ouvre la voie aux grands modèles de langage."
+        },
+        {
+          "text": "Et depuis fin 2022, les assistants conversationnels ont mis l'IA générative entre les mains de centaines de millions de personnes."
+        }
+      ]
+    },
+    {
+      "id": "partie-progres",
+      "layout": "divider",
+      "theme": "progress",
+      "section": "02 · Les progrès",
+      "part": "Partie 1",
+      "number": "01",
+      "heading": "Les progrès",
+      "text": "Aller plus loin, plus vite, et parfois rendre possible ce qui semblait impossible.",
+      "beats": [
+        {
+          "text": "Commençons par les progrès."
+        },
+        {
+          "text": "Dans de nombreux domaines, l'IA permet déjà d'aller plus loin, plus vite, et parfois de faire ce qui semblait impossible."
+        }
+      ]
+    },
+    {
+      "id": "sante",
+      "layout": "cards",
+      "theme": "progress",
+      "section": "02 · Les progrès",
+      "heading": "Santé et recherche scientifique",
+      "items": [
+        {
+          "icon": "pulse",
+          "label": "Diagnostic",
+          "text": "Aide à la détection précoce des maladies sur les images médicales",
+          "at": 0
+        },
+        {
+          "icon": "dna",
+          "label": "Biologie",
+          "text": "AlphaFold prédit la structure 3D des protéines, un défi vieux de 50 ans",
+          "at": 1,
+          "badge": "Prix Nobel de chimie 2024",
+          "badgeAt": 2
+        },
+        {
+          "icon": "flask",
+          "label": "Médicaments",
+          "text": "Exploration de millions de molécules pour accélérer la découverte",
+          "at": 3
+        }
+      ],
+      "beats": [
+        {
+          "text": "En médecine, l'IA aide les médecins à analyser les images médicales, comme les radiographies ou les mammographies, pour détecter plus tôt certaines maladies."
+        },
+        {
+          "text": "En biologie, le programme AlphaFold a su prédire la structure en trois dimensions des protéines, un problème resté ouvert pendant un demi-siècle."
+        },
+        {
+          "text": "Cette avancée a d'ailleurs été récompensée par le prix Nobel de chimie en 2024."
+        },
+        {
+          "text": "L'IA accélère aussi la recherche de nouveaux médicaments, en explorant des millions de molécules possibles."
+        }
+      ]
+    },
+    {
+      "id": "quotidien",
+      "layout": "grid",
+      "theme": "progress",
+      "section": "02 · Les progrès",
+      "heading": "Économie et vie quotidienne",
+      "items": [
+        {
+          "icon": "gear",
+          "label": "Productivité",
+          "text": "Automatiser les tâches répétitives pour se concentrer sur l'essentiel",
+          "at": 0
+        },
+        {
+          "icon": "cap",
+          "label": "Éducation",
+          "text": "Un accompagnement personnalisé, au rythme de chaque élève",
+          "at": 1
+        },
+        {
+          "icon": "lang",
+          "label": "Langues",
+          "text": "La traduction automatique fait tomber les barrières",
+          "at": 2
+        },
+        {
+          "icon": "access",
+          "label": "Accessibilité",
+          "text": "Reconnaissance vocale et description d'images pour plus d'autonomie",
+          "at": 3
+        }
+      ],
+      "beats": [
+        {
+          "text": "Dans le monde du travail, l'IA automatise les tâches répétitives et libère du temps pour des activités à plus forte valeur ajoutée."
+        },
+        {
+          "text": "En éducation, elle peut offrir un accompagnement personnalisé, adapté au rythme de chaque élève."
+        },
+        {
+          "text": "La traduction automatique, elle, fait tomber les barrières entre les langues."
+        },
+        {
+          "text": "Et pour les personnes en situation de handicap, la reconnaissance vocale ou la description automatique d'images ouvrent de nouvelles possibilités d'autonomie."
+        }
+      ]
+    },
+    {
+      "id": "planete",
+      "layout": "cards",
+      "theme": "progress",
+      "section": "02 · Les progrès",
+      "heading": "Climat, agriculture et énergie",
+      "lead": "L'IA, un allié pour la planète",
+      "leadAt": 0,
+      "items": [
+        {
+          "icon": "cloud",
+          "label": "Météo et climat",
+          "text": "Des prévisions en quelques minutes au lieu d'heures de calcul",
+          "at": 1
+        },
+        {
+          "icon": "sprout",
+          "label": "Agriculture",
+          "text": "Mieux doser l'eau et les engrais face à la sécheresse",
+          "at": 2
+        },
+        {
+          "icon": "bolt",
+          "label": "Énergie",
+          "text": "Équilibrer les réseaux et intégrer les énergies renouvelables",
+          "at": 3
+        }
+      ],
+      "beats": [
+        {
+          "text": "L'IA est aussi un allié pour la planète."
+        },
+        {
+          "text": "Les nouveaux modèles de prévision météorologique produisent en quelques minutes des prévisions qui demandaient auparavant des heures de calcul sur des supercalculateurs."
+        },
+        {
+          "text": "En agriculture, elle aide à mieux doser l'eau et les engrais, un enjeu crucial face à la sécheresse."
+        },
+        {
+          "text": "Et dans le secteur de l'énergie, elle permet de mieux équilibrer les réseaux électriques et d'intégrer les énergies renouvelables."
+        }
+      ]
+    },
+    {
+      "id": "partie-defis",
+      "layout": "divider",
+      "theme": "challenge",
+      "section": "03 · Les défis",
+      "part": "Partie 2",
+      "number": "02",
+      "heading": "Les défis",
+      "text": "Des enjeux économiques, éthiques, environnementaux et politiques à regarder en face.",
+      "beats": [
+        {
+          "text": "Mais ces progrès ont un revers."
+        },
+        {
+          "text": "L'intelligence artificielle soulève des défis économiques, éthiques, environnementaux et politiques, qu'il faut regarder en face."
+        }
+      ]
+    },
+    {
+      "id": "emploi",
+      "layout": "stat",
+      "theme": "challenge",
+      "section": "03 · Les défis",
+      "heading": "L'avenir du travail",
+      "stat": {
+        "prefix": "≈ ",
+        "value": 40,
+        "suffix": " %",
+        "text": "des emplois dans le monde sont exposés à l'IA",
+        "at": 1
+      },
+      "stat2": {
+        "prefix": "≈ ",
+        "value": 60,
+        "suffix": " %",
+        "text": "dans les économies avancées",
+        "at": 2
+      },
+      "points": [
+        {
+          "text": "Des métiers transformés",
+          "at": 3
+        },
+        {
+          "text": "Certains menacés",
+          "at": 3
+        },
+        {
+          "text": "De nouveaux métiers",
+          "at": 3
+        }
+      ],
+      "note": {
+        "label": "Enjeu clé",
+        "text": "La formation et la reconversion tout au long de la vie",
+        "at": 4
+      },
+      "source": "Source : Fonds monétaire international (FMI), 2024",
+      "beats": [
+        {
+          "text": "Le premier défi concerne l'emploi."
+        },
+        {
+          "text": "Selon le Fonds monétaire international, près de quarante pour cent des emplois dans le monde sont exposés à l'intelligence artificielle,"
+        },
+        {
+          "text": "et ce chiffre atteint environ soixante pour cent dans les économies avancées."
+        },
+        {
+          "text": "Certains métiers seront transformés, d'autres pourraient disparaître, et de nouveaux apparaîtront."
+        },
+        {
+          "text": "Le véritable enjeu est donc la formation : permettre à chacun d'acquérir de nouvelles compétences."
+        }
+      ]
+    },
+    {
+      "id": "ethique",
+      "layout": "split",
+      "theme": "challenge",
+      "section": "03 · Les défis",
+      "heading": "Biais, éthique et vie privée",
+      "items": [
+        {
+          "icon": "scale",
+          "label": "Biais algorithmiques",
+          "text": "Des données biaisées produisent des décisions injustes : recrutement, crédit, justice…",
+          "at": 1,
+          "detail": "Certains systèmes de reconnaissance faciale se trompent bien plus souvent sur les femmes à la peau foncée.",
+          "detailAt": 2
+        },
+        {
+          "icon": "eye",
+          "label": "Vie privée",
+          "text": "L'IA se nourrit de nos données personnelles, avec des risques de surveillance de masse.",
+          "at": 3
+        }
+      ],
+      "note": {
+        "label": "Boîtes noires",
+        "text": "Des décisions souvent difficiles à expliquer : la transparence est un enjeu central",
+        "at": 4
+      },
+      "beats": [
+        {
+          "text": "Deuxième défi : l'éthique."
+        },
+        {
+          "text": "Une IA apprend à partir de données ; si ces données sont biaisées, ses décisions le seront aussi."
+        },
+        {
+          "text": "Des études ont par exemple montré que certains systèmes de reconnaissance faciale se trompaient beaucoup plus souvent sur les femmes à la peau foncée."
+        },
+        {
+          "text": "S'y ajoute la question de la vie privée : l'IA se nourrit de nos données personnelles, avec des risques de surveillance de masse."
+        },
+        {
+          "text": "Enfin, beaucoup de modèles restent des « boîtes noires », dont les décisions sont difficiles à expliquer."
+        }
+      ]
+    },
+    {
+      "id": "confiance",
+      "layout": "cards",
+      "theme": "challenge",
+      "section": "03 · Les défis",
+      "heading": "Désinformation et sécurité",
+      "items": [
+        {
+          "icon": "mask",
+          "label": "Hypertrucages",
+          "text": "Vidéos et voix falsifiées d'un réalisme troublant (« deepfakes »)",
+          "at": 1
+        },
+        {
+          "icon": "news",
+          "label": "Manipulation",
+          "text": "Fausses informations, escroqueries, atteintes à la réputation",
+          "at": 3
+        },
+        {
+          "icon": "shield",
+          "label": "Cybersécurité",
+          "text": "Des cyberattaques plus sophistiquées et plus nombreuses",
+          "at": 4
+        }
+      ],
+      "aside": {
+        "text": "La voix de cette vidéo a elle-même été générée par une IA.",
+        "at": 2
+      },
+      "note": {
+        "label": "Réflexe essentiel",
+        "text": "Vérifier les sources et développer son esprit critique",
+        "at": 5
+      },
+      "beats": [
+        {
+          "text": "Troisième défi : la confiance dans l'information."
+        },
+        {
+          "text": "Les hypertrucages, ou « deepfakes », permettent de fabriquer des vidéos et des voix falsifiées d'un réalisme troublant."
+        },
+        {
+          "text": "D'ailleurs, la voix que vous entendez en ce moment a elle-même été générée par une intelligence artificielle."
+        },
+        {
+          "text": "Ces contenus peuvent servir à manipuler l'opinion, à escroquer, ou à nuire à la réputation d'une personne."
+        },
+        {
+          "text": "L'IA peut aussi être détournée pour mener des cyberattaques plus sophistiquées."
+        },
+        {
+          "text": "Vérifier les sources et développer notre esprit critique devient donc plus important que jamais."
+        }
+      ]
+    },
+    {
+      "id": "environnement",
+      "layout": "stat",
+      "theme": "challenge",
+      "section": "03 · Les défis",
+      "heading": "Le coût environnemental",
+      "stat": {
+        "prefix": "× ",
+        "value": 2,
+        "suffix": "",
+        "text": "La consommation d'électricité des centres de données pourrait plus que doubler d'ici 2030",
+        "at": 2,
+        "nocount": true
+      },
+      "points": [
+        {
+          "icon": "bolt",
+          "text": "Électricité",
+          "at": 1
+        },
+        {
+          "icon": "drop",
+          "text": "Eau de refroidissement",
+          "at": 3
+        },
+        {
+          "icon": "chip",
+          "text": "Ressources minérales",
+          "at": 3
+        }
+      ],
+      "source": "Source : Agence internationale de l'énergie (AIE), rapport « Énergie et IA », 2025",
+      "beats": [
+        {
+          "text": "Quatrième défi : l'impact environnemental."
+        },
+        {
+          "text": "Entraîner et faire fonctionner les modèles d'IA demande d'immenses centres de données, très gourmands en électricité."
+        },
+        {
+          "text": "Selon l'Agence internationale de l'énergie, leur consommation pourrait plus que doubler d'ici 2030."
+        },
+        {
+          "text": "Leur refroidissement nécessite aussi beaucoup d'eau, et la fabrication des puces mobilise des ressources minérales critiques."
+        },
+        {
+          "text": "D'où l'importance de concevoir des modèles plus sobres, alimentés par des énergies bas carbone."
+        }
+      ],
+      "note": {
+        "label": "Piste",
+        "text": "Des modèles plus sobres, alimentés par des énergies bas carbone",
+        "at": 4
+      }
+    },
+    {
+      "id": "gouvernance",
+      "layout": "cards",
+      "theme": "neutral",
+      "section": "04 · Perspectives",
+      "heading": "Encadrer l'IA",
+      "items": [
+        {
+          "icon": "landmark",
+          "tag": "2021",
+          "label": "UNESCO",
+          "text": "Recommandation sur l'éthique de l'IA, adoptée par 193 États membres",
+          "at": 1
+        },
+        {
+          "icon": "stars",
+          "tag": "2024",
+          "label": "Union européenne",
+          "text": "L'AI Act : encadrer l'IA selon son niveau de risque",
+          "at": 2
+        },
+        {
+          "icon": "globe",
+          "tag": "Demain",
+          "label": "Coopération mondiale",
+          "text": "L'IA ne connaît pas de frontières : des règles communes sont nécessaires",
+          "at": 3
+        }
+      ],
+      "beats": [
+        {
+          "text": "Face à ces défis, les États commencent à réagir."
+        },
+        {
+          "text": "En 2021, les cent quatre-vingt-treize États membres de l'UNESCO ont adopté une recommandation sur l'éthique de l'intelligence artificielle."
+        },
+        {
+          "text": "En 2024, l'Union européenne a adopté son règlement sur l'intelligence artificielle, la première grande loi au monde à encadrer l'IA selon son niveau de risque."
+        },
+        {
+          "text": "Mais l'IA ne connaît pas de frontières : seule une coopération internationale permettra de fixer des règles communes."
+        }
+      ]
+    },
+    {
+      "id": "conclusion",
+      "layout": "conclusion",
+      "theme": "neutral",
+      "section": "04 · Perspectives",
+      "heading": "Une IA au service de l'humain",
+      "lead": "L'IA n'est ni bonne ni mauvaise en soi : tout dépend de l'usage que nous en faisons.",
+      "leadAt": 0,
+      "items": [
+        {
+          "icon": "cap",
+          "label": "Former",
+          "text": "les citoyens",
+          "at": 2
+        },
+        {
+          "icon": "scale",
+          "label": "Encadrer",
+          "text": "les usages par des règles claires",
+          "at": 3
+        },
+        {
+          "icon": "sprout",
+          "label": "Innover",
+          "text": "de façon transparente, équitable et durable",
+          "at": 4
+        }
+      ],
+      "quote": {
+        "text": "L'avenir de l'IA n'est pas écrit d'avance : c'est à nous de l'écrire.",
+        "at": 5
+      },
+      "beats": [
+        {
+          "text": "En conclusion, l'intelligence artificielle n'est ni bonne ni mauvaise en soi : tout dépend de l'usage que nous en faisons."
+        },
+        {
+          "text": "Pour en tirer le meilleur, trois leviers sont essentiels :"
+        },
+        {
+          "text": "former les citoyens,"
+        },
+        {
+          "text": "encadrer les usages par des règles claires,"
+        },
+        {
+          "text": "et développer une IA transparente, équitable et durable."
+        },
+        {
+          "text": "L'avenir de l'IA n'est pas écrit d'avance : c'est à nous de l'écrire."
+        }
+      ]
+    },
+    {
+      "id": "fin",
+      "layout": "end",
+      "theme": "neutral",
+      "section": "",
+      "heading": "Merci de votre attention",
+      "subheading": "Des questions ?",
+      "beats": [
+        {
+          "text": "Merci de votre attention."
+        },
+        {
+          "text": "Je suis à votre disposition pour répondre à vos questions."
+        }
+      ]
+    }
+  ]
+}
