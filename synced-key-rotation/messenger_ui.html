@@ -46,6 +46,13 @@
            font: inherit; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
   .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  #setup { background: var(--panel); border-bottom: 1px solid var(--line); padding: 12px 16px;
+           display: flex; flex-direction: column; gap: 8px; }
+  #setup[hidden] { display: none; }
+  #setup h2 { font-size: 16px; margin: 0; }
+  #setup input[type=url], #setup input[type=text] { border-radius: 10px; border: 1px solid var(--line);
+           padding: 10px; font: inherit; background: var(--bg); color: var(--text); }
+  #setup button { padding: 10px; }
 </style>
 </head>
 <body>
@@ -59,6 +66,14 @@
     <span class="chip" id="offline">الجهة الأوفلاين: …</span>
   </div>
 </header>
+<section id="setup" hidden>
+  <h2>الإعداد (مرة واحدة)</h2>
+  <p class="note">افتح أولًا تطبيق "الخزنة الأوفلاين" وأتمّ الاقتران، ثم أدخل هنا عنوان خادم الترحيل.</p>
+  <input id="relayUrl" type="url" placeholder="https://relay.example.org" dir="ltr">
+  <input id="myName" type="text" placeholder="اسمك (للعرض فقط)">
+  <label><input id="fastMode" type="checkbox"> وضع التجربة السريع (حافلة كل بضع ثوانٍ)</label>
+  <button id="saveSetup" type="button">حفظ</button>
+</section>
 <main id="messages" aria-live="polite"></main>
 <footer>
   <form id="form">
@@ -70,6 +85,24 @@
 </footer>
 <script>
   const TOKEN = "__TOKEN__";
+  // على الحاسوب: نتحدث مع messenger.py عبر الشبكة المحلية. في تطبيق أندرويد: عبر جسر داخلي.
+  const bridge = window.AndroidBridge || null;
+  const api = {
+    async state(after) {
+      if (bridge) return JSON.parse(bridge.state(after));
+      const r = await fetch("/api/state?after=" + after, {headers: {"X-Token": TOKEN}});
+      return r.json();
+    },
+    async send(text) {
+      if (bridge) return JSON.parse(bridge.send(text));
+      const r = await fetch("/api/send", {
+        method: "POST",
+        headers: {"X-Token": TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({text}),
+      });
+      return r.json();
+    },
+  };
   const box = document.getElementById("messages");
   const text = document.getElementById("text");
   let after = 0, maxText = 2898, pendingNodes = [];
@@ -92,9 +125,9 @@
   async function refresh() {
     let s;
     try {
-      const r = await fetch("/api/state?after=" + after, {headers: {"X-Token": TOKEN}});
-      s = await r.json();
+      s = await api.state(after);
     } catch (e) { return; }
+    document.getElementById("setup").hidden = !s.needs_setup;
     const stick = nearBottom();
     document.getElementById("title").textContent =
       "المراسلة الآمنة" + (s.name ? " — " + s.name : "");
@@ -137,12 +170,7 @@
     e.preventDefault();
     const value = text.value;
     if (!value.trim()) return;
-    const r = await fetch("/api/send", {
-      method: "POST",
-      headers: {"X-Token": TOKEN, "Content-Type": "application/json"},
-      body: JSON.stringify({text: value}),
-    });
-    const result = await r.json();
+    const result = await api.send(value);
     if (result.ok) { text.value = ""; updateCount(); refresh(); }
     else alert(result.error);
   });
@@ -150,6 +178,11 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); document.getElementById("form").requestSubmit(); }
   });
   text.addEventListener("input", updateCount);
+  document.getElementById("saveSetup").addEventListener("click", () => {
+    const result = JSON.parse(bridge.configure(document.getElementById("relayUrl").value,
+      document.getElementById("myName").value, document.getElementById("fastMode").checked));
+    if (!result.ok) alert(result.error); else refresh();
+  });
   updateCount();
   refresh();
   setInterval(refresh, 1000);

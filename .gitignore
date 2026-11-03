@@ -2,3 +2,8 @@ presentation/build/
 node_modules/
 __pycache__/
 synced-key-rotation/trial_run/
+synced-key-rotation/android/.gradle/
+synced-key-rotation/android/.kotlin/
+synced-key-rotation/android/build/
+synced-key-rotation/android/*/build/
+synced-key-rotation/android/local.properties
