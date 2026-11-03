@@ -1,24 +1,70 @@
 """
 أدوات مشتركة بين النظامين
 ==========================
-- الجدول الزمني للتغيير (Schedule): يحسب "رقم الحقبة" الحالية من الساعة فقط،
-  لذلك يعرف المرسل والمستقبل دائمًا أي مفتاح يجب استعماله دون أن يتواصلا.
-- البصمات (fingerprint): لمقارنة سرّين بالعين دون كشفهما.
-- الكتابة الآمنة للملفات السرية.
+- مصدر العشوائية الحقيقية، مع "فحص صحة" يرفض المولّد المعطوب.
+- دالة باتجاه واحد (HMAC-SHA256) تُبنى عليها كل السلاسل.
+- البصمات، والوقت، والكتابة الآمنة للملفات السرية.
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 ROLES = ("A", "B")  # الطرف الأول والطرف الثاني في الزوج
 
 
+# ---------------------------------------------------------------------- #
+# العشوائية الحقيقية + فحص الصحة
+# ---------------------------------------------------------------------- #
+class RandomnessFailure(Exception):
+    """مولّد العشوائية أعطى نتيجة مشبوهة؛ البرنامج يرفض الاستمرار."""
+
+
+_recent_outputs: deque = deque(maxlen=256)
+
+
+def secure_random(size: int, source: Callable[[int], bytes] = os.urandom) -> bytes:
+    """
+    عشوائية حقيقية من نظام التشغيل (يجمعها من ضجيج فيزيائي داخل الجهاز)،
+    مع فحص صحة قبل استعمالها.
+
+    تنبيه مهم: لا يوجد فحص يستطيع إثبات أن العشوائية قوية (انظر
+    randomness_lab.py). هذا الفحص يكشف فقط الأعطال الفادحة التي وقعت فعلًا
+    في التاريخ:
+      - مولّد يكرر النتيجة نفسها (مثل عطب جهاز PlayStation 3 سنة 2010)،
+      - مولّد يعطي أصفارًا أو قيمًا قليلة متكررة.
+    عند أي عطب من هذا النوع يتوقف البرنامج بدل أن يولّد مفاتيح ضعيفة بصمت.
+    """
+    data = source(size)
+    if not isinstance(data, bytes) or len(data) != size:
+        raise RandomnessFailure("مولّد العشوائية لم يُعطِ العدد المطلوب من البايتات")
+    if size >= 12:
+        if len(set(data)) < size // 4:
+            raise RandomnessFailure(
+                "مخرجات مولّد العشوائية متشابهة بشكل غير طبيعي — توقف البرنامج احتياطًا")
+        digest = hashlib.sha256(data).digest()
+        if digest in _recent_outputs:
+            raise RandomnessFailure(
+                "مولّد العشوائية كرر نتيجة سابقة حرفيًا — توقف البرنامج احتياطًا")
+        _recent_outputs.append(digest)
+    return data
+
+
+def one_way(key: bytes, label: bytes) -> bytes:
+    """دالة باتجاه واحد: سهلة الحساب، ومستحيلة العكس عمليًا (HMAC-SHA256)."""
+    return hmac.new(key, label, hashlib.sha256).digest()
+
+
+# ---------------------------------------------------------------------- #
+# الوقت
+# ---------------------------------------------------------------------- #
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -30,56 +76,17 @@ def to_utc(moment: datetime) -> datetime:
     return moment.astimezone(timezone.utc)
 
 
+def parse_time(text: str) -> datetime:
+    return to_utc(datetime.fromisoformat(text))
+
+
 def stamp(moment: datetime) -> str:
-    return to_utc(moment).strftime("%Y-%m-%d %H:%M UTC")
+    return to_utc(moment).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-@dataclass(frozen=True)
-class Schedule:
-    """
-    الجدول الزمني المتفق عليه بين الطرفين.
-
-    "الحقبة" = الفترة التي يبقى فيها مفتاح واحد صالحًا (افتراضيًا يوم كامل
-    من 08:00 إلى 08:00). الحقبة رقم 0 تبدأ عند anchor وكل حقبة تدوم period.
-    """
-
-    anchor: datetime
-    period: timedelta
-
-    @classmethod
-    def starting_at(cls, now: datetime, rotation_hour_utc: int = 8,
-                    period_hours: int = 24) -> "Schedule":
-        if not 0 <= rotation_hour_utc <= 23:
-            raise ValueError("ساعة التغيير يجب أن تكون بين 0 و 23")
-        if period_hours <= 0:
-            raise ValueError("مدة الحقبة يجب أن تكون عددًا موجبًا من الساعات")
-        now = to_utc(now)
-        anchor = now.replace(hour=rotation_hour_utc, minute=0, second=0, microsecond=0)
-        if anchor > now:
-            anchor -= timedelta(days=1)
-        return cls(anchor, timedelta(hours=period_hours))
-
-    def epoch_at(self, moment: datetime) -> int:
-        """رقم الحقبة في لحظة معينة."""
-        return (to_utc(moment) - self.anchor) // self.period
-
-    def start_of(self, epoch: int) -> datetime:
-        return self.anchor + epoch * self.period
-
-    def to_dict(self) -> dict:
-        return {
-            "anchor": self.anchor.isoformat(),
-            "period_seconds": int(self.period.total_seconds()),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "Schedule":
-        period = timedelta(seconds=int(data["period_seconds"]))
-        if period <= timedelta(0):
-            raise ValueError("مدة الحقبة غير صالحة")
-        return cls(to_utc(datetime.fromisoformat(data["anchor"])), period)
-
-
+# ---------------------------------------------------------------------- #
+# البصمات والملفات
+# ---------------------------------------------------------------------- #
 def fingerprint(secret: bytes, purpose: str) -> str:
     """
     بصمة قصيرة لسرّ ما (مثل XXXX-XXXX-XXXX-XXXX).
@@ -116,7 +123,7 @@ def wipe_file(path: Path) -> None:
     """
     يكتب أصفارًا فوق الملف ثم يحذفه.
     ملاحظة: على أقراص SSD والفلاشات لا يضمن هذا المسح الكامل؛ في نظام حقيقي
-    يُفضَّل نقل المفتاح عبر رمز QR بدل ملف.
+    يُفضَّل نقل المفاتيح عبر رمز QR بدل ملف.
     """
     path = Path(path)
     size = path.stat().st_size
