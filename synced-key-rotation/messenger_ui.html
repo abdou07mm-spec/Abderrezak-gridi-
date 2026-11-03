@@ -56,6 +56,7 @@
     <span class="chip">بصمة المفتاح: <span class="fp" id="fingerprint">—</span></span>
     <span class="chip" id="bus">الحافلة التالية: …</span>
     <span class="chip" id="relay">الخادم: …</span>
+    <span class="chip" id="offline">الجهة الأوفلاين: …</span>
   </div>
 </header>
 <main id="messages" aria-live="polite"></main>
@@ -108,6 +109,12 @@
     relay.textContent = s.relay_ok === false ? "الخادم: غير متصل" : "الخادم: متصل";
     relay.className = "chip " + (s.relay_ok === false ? "bad" : "ok");
     maxText = s.max_text;
+    const off = document.getElementById("offline");
+    if (!s.offline) { off.textContent = "الجهة الأوفلاين: لا تعمل"; off.className = "chip bad"; }
+    else if (!s.offline.alive) { off.textContent = "الجهة الأوفلاين: متوقفة"; off.className = "chip bad"; }
+    else if (s.offline.isolation === "system") {
+      off.textContent = "الجهة الأوفلاين: تعمل ومعزولة بفرض النظام ✓"; off.className = "chip ok";
+    } else { off.textContent = "الجهة الأوفلاين: تعمل (عزل برمجي فقط)"; off.className = "chip warn"; }
 
     pendingNodes.forEach(n => n.remove());
     for (const m of s.messages) {

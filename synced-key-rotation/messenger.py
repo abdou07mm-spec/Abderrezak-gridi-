@@ -37,7 +37,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from bus import MAX_GAP, MIN_GAP, Bus, Departure
-from common import one_way, use_utf8_console, utc_now
+from common import one_way, parse_time, read_json, use_utf8_console, utc_now
 from online_node import (
     MAX_TEXT_BYTES,
     EpochState,
@@ -50,6 +50,9 @@ from online_node import (
 HERE = Path(__file__).resolve().parent
 MAX_LOG = 1000
 MAX_OUTBOX = 2000
+STATUS_FILE = "vault_status.json"          # تكتبه الجهة الأوفلاين (vault_service.py)
+OFFLINE_STALE = timedelta(minutes=2)       # بعدها نعتبر الجهة الأوفلاين متوقفة
+CLOCK_WARNING_SECONDS = 120                # تقدّم ساعة الطرف الآخر الذي نُنذر عنده
 
 
 def mailbox_for(state: EpochState, role: str) -> str:
@@ -101,6 +104,7 @@ class Messenger:
         self.relay_ok: bool | None = None
         self.last_peer_box: str | None = None
         self.last_error: str | None = None
+        self.skew_warned: set[int] = set()
 
     # ------------------------------------------------------------------ #
     def note(self, who: str, text: str, moment: datetime) -> None:
@@ -200,7 +204,14 @@ class Messenger:
                 self.note("peer", text, now)
         elif result.kind == "dummy":
             self.stats["dummies_in"] += 1
-        elif not result.duplicate and not result.waiting:
+        if (result.kind == "handshake" and result.clock_skew is not None
+                and result.clock_skew > CLOCK_WARNING_SECONDS
+                and result.epoch not in self.skew_warned):
+            self.skew_warned.add(result.epoch)
+            self.note("system", f"⚠ ساعة الطرف الآخر متقدّمة على ساعتك بحوالي "
+                                f"{round(result.clock_skew / 60)} دقيقة على الأقل. "
+                                "اطلبا من الجهازين ضبط الوقت تلقائيًا.", now)
+        if result.kind == "handshake" and not result.duplicate and not result.waiting:
             fp = self.node.epochs[result.epoch].key_fp
             self.note("system", f"اكتملت المصافحة الهجينة للفترة {result.epoch}. بصمة المفتاح: {fp}",
                       now)
@@ -223,10 +234,20 @@ class Messenger:
                 "next_bus": max(0.0, (self.bus.next_departure - now).total_seconds()),
                 "queue": [text for _, text in self.bus.queue],
                 "relay_ok": self.relay_ok,
+                "offline": self._offline_status(now),
                 "stats": dict(self.stats),
                 "messages": [m for m in self.log if m["id"] > after_id],
                 "max_text": MAX_TEXT_BYTES,
             }
+
+    def _offline_status(self, now: datetime) -> dict | None:
+        """ما كتبته الجهة الأوفلاين عن نفسها: هل تعمل؟ وهل عزلها يفرضه النظام؟"""
+        try:
+            data = read_json(self.keys_dir / STATUS_FILE)
+            alive = now - parse_time(data["heartbeat"]) < OFFLINE_STALE
+            return {"isolation": data["isolation"], "alive": alive}
+        except (OSError, ValueError, KeyError):
+            return None
 
     def run_forever(self, stop: threading.Event, tick: float = 0.25) -> None:
         while not stop.is_set():

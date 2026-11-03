@@ -417,6 +417,7 @@ class Received:
     texts: tuple[str, ...] = ()
     duplicate: bool = False
     waiting: bool = False           # مصافحة وصلت قبل أن يحمل الطرف الآخر الصندوق
+    clock_skew: float | None = None  # كم تتقدّم ساعة الطرف الآخر على ساعتنا (ثوانٍ، تقدير أدنى)
 
     @property
     def text(self) -> str | None:
@@ -555,21 +556,23 @@ class OnlineNode:
     # ------------------------------------------------------------------ #
     # 2) الإرسال
     # ------------------------------------------------------------------ #
-    def _handshake_packet(self, epoch: int, state: EpochState) -> str:
+    def _handshake_packet(self, epoch: int, state: EpochState, now: datetime) -> str:
         header_key, body_key = _handshake_keys(state.hs_key)
         header = HEADER.pack(
             b"H", FORMAT_VERSION, epoch, self.role.encode("ascii"), state.hs_public, 0, 0,
             state.hs_kem_box if (self.role == "A" and state.hs_kem_box) else NO_KEM_CT,
             state.hs_kem_public if self.role == "B" else NO_KEM_PUBLIC)
-        # علامة "أنا جاهز": تخبر الطرف الآخر أن مصافحته وصلتني
-        return _seal(header_key, body_key, header, bytes([1 if state.ready else 0]))
+        # علامة "أنا جاهز" (مصافحتك وصلتني) + وقت ساعتي، ليكشف الطرف الآخر أي اختلاف بين الساعتين
+        payload = bytes([1 if state.ready else 0]) + struct.pack(">q", int(now.timestamp()))
+        return _seal(header_key, body_key, header, payload)
 
     def my_handshake(self, now: datetime | None = None) -> str:
         """مصافحتي للفترة الحالية (لإرسالها أو إعادة إرسالها للطرف الآخر)."""
-        return self._handshake_packet(*self.current_state(now))
+        now = self._now(now)
+        return self._handshake_packet(*self.current_state(now), now)
 
     def handshake_for(self, epoch: int) -> str:
-        return self._handshake_packet(epoch, self.epochs[epoch])
+        return self._handshake_packet(epoch, self.epochs[epoch], utc_now())
 
     def seal_packet(self, texts: list[str], now: datetime | None = None) -> str:
         """
@@ -618,15 +621,18 @@ class OnlineNode:
                     return self._receive_message(epoch, state, header, raw, now)
             header = _open_header(_handshake_keys(state.hs_key)[0], raw)
             if header is not None:
-                return self._receive_handshake(epoch, state, header, raw)
+                return self._receive_handshake(epoch, state, header, raw, now)
         raise MessageRejected(
             "تعذّر فتح الحزمة بأي مفتاح متاح: إما أنها مزوّرة أو مُعدّلة أو ضجيج، أو ليست من "
             "الطرف المقترن، أو أنها لفترة لم يُستورد مفتاحها بعد، أو قديمة أُتلفت مفاتيحها.")
 
     def _receive_handshake(self, epoch: int, state: EpochState,
-                           header: bytes, raw: bytes) -> Received:
+                           header: bytes, raw: bytes, now: datetime) -> Received:
         half, _, _, box, kem_public = self._parse_header(header, b"H", epoch)
-        peer_ready = _open_body(_handshake_keys(state.hs_key)[1], raw, header)[0] == 1
+        body = _open_body(_handshake_keys(state.hs_key)[1], raw, header)
+        peer_ready = body[0] == 1
+        # التأخير في الطريق يجعل هذا التقدير أصغر من الحقيقة، فلا ينذر خطأً أبدًا
+        skew = struct.unpack(">q", body[1:9])[0] - now.timestamp()
         has_box = not hmac.compare_digest(box, NO_KEM_CT)
 
         if state.ready:
@@ -640,7 +646,7 @@ class OnlineNode:
             if peer_ready and not state.peer_confirmed:
                 state.peer_confirmed = True
                 self.save()
-            return Received("handshake", epoch, duplicate=True)
+            return Received("handshake", epoch, duplicate=True, clock_skew=skew)
 
         dh_shared = _dh(state.hs_private, half)
         if self.role == "A":
@@ -652,7 +658,7 @@ class OnlineNode:
         else:
             if not has_box:
                 # مصافحة A وصلت قبل أن يصله قفلنا: ننتظر مصافحته التالية (تحمل الصندوق)
-                return Received("handshake", epoch, waiting=True)
+                return Received("handshake", epoch, waiting=True, clock_skew=skew)
             kem_shared = kem_unlock(state.hs_kem_private, box)
             state.hs_kem_box = box
             secrets = derive_epoch(state.vault_key, epoch, dh_shared, kem_shared,
@@ -683,7 +689,7 @@ class OnlineNode:
         state.hs_kem_private = None
         state.vault_key = None
         self.save()
-        return Received("handshake", epoch)
+        return Received("handshake", epoch, clock_skew=skew)
 
     def _receive_message(self, epoch: int, state: EpochState, header: bytes,
                          raw: bytes, now: datetime) -> Received:

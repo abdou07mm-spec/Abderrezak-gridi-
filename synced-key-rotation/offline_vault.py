@@ -34,12 +34,13 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import hmac
 import math
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from common import (
@@ -125,6 +126,72 @@ def mix_seed(sources: list[tuple[str, bytes]]) -> bytes:
     return mixer.digest()
 
 
+def make_seed(peer_randomness: bytes | None = None, dice: str | None = None) -> bytes:
+    """طقس البذرة: عشوائية هذا الجهاز + (اختياريًا) عشوائية جهاز آخر + رميات نرد."""
+    sources = [("this-device", secure_random(SEED_BYTES))]
+    if peer_randomness is not None:
+        if len(peer_randomness) < 16:
+            raise VaultError("عشوائية الطرف الآخر قصيرة جدًا")
+        sources.append(("peer-device", peer_randomness))
+    if dice:
+        rolls = parse_dice(dice)
+        if rolls:
+            sources.append(("dice", bytes(rolls)))
+    return mix_seed(sources)
+
+
+def schedule_seconds(min_hours: float, max_hours: float) -> tuple[int, int]:
+    """حدود المدة العشوائية بين تغييرين، بالثواني (مقرّبة إلى الدقيقة)."""
+    min_seconds, max_seconds = round(min_hours * 60) * 60, round(max_hours * 60) * 60
+    if min_seconds < 60:
+        raise VaultError("أقصر مدة بين تغييرين يجب أن تكون دقيقة واحدة على الأقل")
+    if max_seconds < min_seconds:
+        raise VaultError("أطول مدة يجب أن تكون أكبر من أقصر مدة أو مساوية لها")
+    return min_seconds, max_seconds
+
+
+# ---------------------------------------------------------------------- #
+# رمز الاقتران: كل ما يلزم لنسخ الخزنة عند الطرف الآخر، في سطر يُكتب باليد
+# ---------------------------------------------------------------------- #
+PAIRING_VERSION = 1
+PAIRING_ORIGIN = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
+def encode_pairing_code(seed: bytes, epoch_start: datetime, min_seconds: int,
+                        max_seconds: int) -> str:
+    """
+    البذرة + بداية الجدول + حدود المدة + بصمة تحقق (تكشف أي خطأ في الكتابة).
+    هذا الرمز هو السرّ كله: يُسلَّم يدًا بيد، ولا يُرسل أبدًا عبر أي تطبيق.
+    """
+    minutes = int((to_utc(epoch_start) - PAIRING_ORIGIN).total_seconds() // 60)
+    payload = (bytes([PAIRING_VERSION]) + seed + minutes.to_bytes(4, "big")
+               + (min_seconds // 60).to_bytes(2, "big") + (max_seconds // 60).to_bytes(2, "big"))
+    check = hashlib.sha256(b"pairing-check|" + payload).digest()[:3]
+    text = base64.b32encode(payload + check).decode("ascii").rstrip("=")
+    return "-".join(text[i:i + 4] for i in range(0, len(text), 4))
+
+
+def decode_pairing_code(code: str) -> tuple[bytes, datetime, int, int]:
+    text = "".join(ch for ch in code.upper() if ch.isalnum())
+    try:
+        raw = base64.b32decode(text + "=" * (-len(text) % 8))
+    except ValueError:
+        raise VaultError("رمز الاقتران غير صالح: تحقق من الحروف") from None
+    if len(raw) != 1 + SEED_BYTES + 8 + 3 or raw[0] != PAIRING_VERSION:
+        raise VaultError("رمز الاقتران غير صالح: طوله غير صحيح")
+    payload, check = raw[:-3], raw[-3:]
+    if not hmac.compare_digest(check, hashlib.sha256(b"pairing-check|" + payload).digest()[:3]):
+        raise VaultError("رمز الاقتران غير صحيح: يوجد خطأ في الكتابة")
+    seed = payload[1:1 + SEED_BYTES]
+    rest = payload[1 + SEED_BYTES:]
+    epoch_start = PAIRING_ORIGIN + timedelta(minutes=int.from_bytes(rest[:4], "big"))
+    min_seconds = int.from_bytes(rest[4:6], "big") * 60
+    max_seconds = int.from_bytes(rest[6:8], "big") * 60
+    if not 60 <= min_seconds <= max_seconds:
+        raise VaultError("رمز الاقتران غير صالح")
+    return seed, epoch_start, min_seconds, max_seconds
+
+
 class OfflineVault:
     """الخزنة غير المتصلة: تحفظ حالة السلسلة الحالية فقط."""
 
@@ -163,33 +230,27 @@ class OfflineVault:
         for path in (my_path, peer_path):
             if path.exists():
                 raise VaultError(f"الملف موجود مسبقًا ولن يُستبدل: {path}")
-        min_seconds, max_seconds = round(min_hours * 3600), round(max_hours * 3600)
-        if min_seconds < 60:
-            raise VaultError("أقصر مدة بين تغييرين يجب أن تكون دقيقة واحدة على الأقل")
-        if max_seconds < min_seconds:
-            raise VaultError("أطول مدة يجب أن تكون أكبر من أقصر مدة أو مساوية لها")
-
-        sources = [("this-device", secure_random(SEED_BYTES))]
-        if peer_randomness is not None:
-            if len(peer_randomness) < 16:
-                raise VaultError("عشوائية الطرف الآخر قصيرة جدًا")
-            sources.append(("peer-device", peer_randomness))
-        if dice:
-            rolls = parse_dice(dice)
-            if rolls:
-                sources.append(("dice", bytes(rolls)))
-        seed = mix_seed(sources)
-
+        min_seconds, max_seconds = schedule_seconds(min_hours, max_hours)
+        seed = make_seed(peer_randomness, dice)
         now = utc_now() if now is None else to_utc(now)
         epoch_start = now.replace(microsecond=0)
-        vaults = tuple(
-            cls(path, pair_id=fingerprint(seed, "pair"), role=role,
-                min_seconds=min_seconds, max_seconds=max_seconds,
-                epoch=0, epoch_start=epoch_start, chain_key=seed)
-            for path, role in zip((my_path, peer_path), ROLES))
-        for vault in vaults:
-            vault.save()
-        return vaults  # type: ignore[return-value]
+        return tuple(cls.from_seed(path, seed, role, epoch_start, min_seconds, max_seconds)
+                     for path, role in zip((my_path, peer_path), ROLES))  # type: ignore[return-value]
+
+    @classmethod
+    def from_seed(cls, path: Path, seed: bytes, role: str, epoch_start: datetime,
+                  min_seconds: int, max_seconds: int) -> "OfflineVault":
+        """ينشئ خزنة من بذرة (عند الإنشاء، أو من رمز الاقتران عند الطرف الآخر)."""
+        path = Path(path)
+        if path.exists():
+            raise VaultError(f"الملف موجود مسبقًا ولن يُستبدل: {path}")
+        if len(seed) != SEED_BYTES:
+            raise VaultError("طول البذرة غير صحيح")
+        vault = cls(path, pair_id=fingerprint(seed, "pair"), role=role,
+                    min_seconds=min_seconds, max_seconds=max_seconds,
+                    epoch=0, epoch_start=epoch_start, chain_key=seed)
+        vault.save()
+        return vault
 
     @classmethod
     def load(cls, path: Path) -> "OfflineVault":

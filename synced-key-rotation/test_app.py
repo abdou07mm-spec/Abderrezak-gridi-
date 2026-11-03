@@ -240,3 +240,79 @@ class LocalUiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InstalledAppTest(unittest.TestCase):
+    """الجهتان بعد التثبيت: الاقتران بالرمز، والجهة الأوفلاين المستقلة، وكشف اختلاف الساعات."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_pairing_code_gives_identical_vaults_and_schedule(self) -> None:
+        import secure_app
+        code, vault_a = secure_app.create(self.tmp / "a", min_hours=2, max_hours=10, now=T0)
+        vault_b = secure_app.join(self.tmp / "b", code.lower().replace("-", " "))
+        self.assertEqual(vault_a.pair_id, vault_b.pair_id)
+        self.assertEqual((vault_a.role, vault_b.role), ("A", "B"))
+        self.assertEqual(vault_a.upcoming_changes(5), vault_b.upcoming_changes(5))
+        change = vault_a.upcoming_changes(1)[0]
+        self.assertEqual(vault_a.release_key(change)["key"], vault_b.release_key(change)["key"])
+
+    def test_pairing_code_typo_and_reuse_rejected(self) -> None:
+        import secure_app
+        from offline_vault import VaultError
+        code, _ = secure_app.create(self.tmp / "a", now=T0)
+        typo = code[:-1] + ("A" if code[-1] != "A" else "B")
+        with self.assertRaises(VaultError):
+            secure_app.join(self.tmp / "b", typo)
+        secure_app.join(self.tmp / "b", code)
+        with self.assertRaises(VaultError):                     # لا يُستبدل ملف خزنة موجود
+            secure_app.join(self.tmp / "b", code)
+
+    def test_offline_side_changes_keys_by_itself_at_secret_times(self) -> None:
+        import secure_app
+        import vault_service
+        _, vault = secure_app.create(self.tmp / "a", min_hours=2, max_hours=10, now=T0)
+        vault_path, _, drop = secure_app.layout(self.tmp / "a")
+        changes = vault.upcoming_changes(3)
+        released = []
+        moment = T0
+        while moment < changes[2] + timedelta(minutes=5):        # دورة كل 5 دقائق (وقت محاكى)
+            vault_service.tick(vault_path, drop, "system", moment)
+            released.extend(sorted(p.name for p in drop.glob("key_epoch_*.json")))
+            for path in drop.glob("key_epoch_*.json"):
+                path.unlink()                                    # الجهة الأونلاين تأخذها
+            moment += timedelta(minutes=5)
+        self.assertEqual(released, [f"key_epoch_{e:06d}.json" for e in range(4)])
+        status = json.loads((drop / vault_service.STATUS_FILE).read_text())
+        self.assertEqual(status["isolation"], "system")
+
+    def test_offline_side_cannot_open_any_connection(self) -> None:
+        import subprocess
+        import sys
+        code = ("import vault_service, socket\n"
+                "vault_service.seal_off_network()\n"
+                "try:\n    socket.socket()\n    print('OPEN')\n"
+                "except OSError:\n    print('BLOCKED')\n"
+                "try:\n    socket.create_connection(('127.0.0.1', 9))\n    print('OPEN')\n"
+                "except OSError:\n    print('BLOCKED')\n")
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                             cwd=Path(__file__).parent).stdout.split()
+        self.assertEqual(out, ["BLOCKED", "BLOCKED"])
+
+    def test_clock_skew_between_devices_is_detected(self) -> None:
+        from online_node import OnlineNode
+        vault_a, vault_b = OfflineVault.create_pair(self.tmp / "va.json", self.tmp / "vb.json", now=T0)
+        now = vault_a.upcoming_changes(1)[0] + timedelta(minutes=10)
+        node_a = OnlineNode.open(self.tmp / "na.json")
+        node_b = OnlineNode.open(self.tmp / "nb.json")
+        node_a.import_bundle(vault_a.release_key(now), now)
+        node_b.import_bundle(vault_b.release_key(now), now)
+        ahead = node_b.receive(node_a.my_handshake(now + timedelta(minutes=5)), now)  # ساعة أحمد متقدّمة
+        self.assertAlmostEqual(ahead.clock_skew, 300, delta=2)
+        synced = node_a.receive(node_b.my_handshake(now), now)
+        self.assertAlmostEqual(synced.clock_skew, 0, delta=2)
