@@ -1,3 +1,4 @@
 presentation/build/
 node_modules/
 __pycache__/
+synced-key-rotation/trial_run/

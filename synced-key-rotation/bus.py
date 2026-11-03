@@ -34,10 +34,10 @@ MIN_GAP = timedelta(minutes=2.5)
 MAX_GAP = timedelta(minutes=7.5)     # المتوسط 5 دقائق
 
 
-def random_gap() -> timedelta:
+def random_gap(min_gap: timedelta = MIN_GAP, max_gap: timedelta = MAX_GAP) -> timedelta:
     """مدة عشوائية حتى الانطلاق التالي (من مولّد مفحوص)."""
     fraction = int.from_bytes(secure_random(16)[:8], "big") / 2 ** 64
-    return MIN_GAP + (MAX_GAP - MIN_GAP) * fraction
+    return min_gap + (max_gap - min_gap) * fraction
 
 
 @dataclass
@@ -46,6 +46,7 @@ class Departure:
     packet: str
     kind: str          # "message" أو "dummy" أو "handshake" أو "noise" (يعرفه المرسل وحده)
     riders: int = 0    # عدد الرسائل الحقيقية في الحزمة
+    texts: tuple[str, ...] = ()   # نصوص الرسائل (محليًا فقط، للعرض عند المرسل)
 
 
 @dataclass
@@ -54,10 +55,16 @@ class Bus:
     next_departure: datetime
     queue: list[tuple[datetime, str]] = field(default_factory=list)   # (وقت الكتابة، النص)
     waits: list[timedelta] = field(default_factory=list)              # كم انتظرت كل رسالة
+    min_gap: timedelta = MIN_GAP
+    max_gap: timedelta = MAX_GAP
 
     @classmethod
-    def start(cls, node: OnlineNode, now: datetime) -> "Bus":
-        return cls(node, to_utc(now) + random_gap())
+    def start(cls, node: OnlineNode, now: datetime, min_gap: timedelta = MIN_GAP,
+              max_gap: timedelta = MAX_GAP) -> "Bus":
+        if not timedelta(0) < min_gap <= max_gap:
+            raise ValueError("مدة الحافلة غير صحيحة")
+        return cls(node, to_utc(now) + random_gap(min_gap, max_gap),
+                   min_gap=min_gap, max_gap=max_gap)
 
     def enqueue(self, text: str, now: datetime) -> None:
         if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
@@ -69,7 +76,7 @@ class Bus:
         departures = []
         while self.next_departure <= to_utc(now):
             departures.append(self._depart(self.next_departure))
-            self.next_departure += random_gap()
+            self.next_departure += random_gap(self.min_gap, self.max_gap)
         return departures
 
     def _depart(self, moment: datetime) -> Departure:
@@ -88,4 +95,5 @@ class Bus:
             self.queue[:0] = riders            # الركاب ينتظرون الحافلة التالية
             return Departure(moment, random_filler(), "noise")
         self.waits.extend(moment - written for written, _ in riders)
-        return Departure(moment, packet, "message" if riders else "dummy", len(riders))
+        return Departure(moment, packet, "message" if riders else "dummy", len(riders),
+                         tuple(text for _, text in riders))

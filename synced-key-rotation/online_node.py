@@ -455,6 +455,10 @@ class OnlineNode:
             "epochs": {str(e): s.to_dict() for e, s in sorted(self.epochs.items())},
         })
 
+    @property
+    def peer_role(self) -> str:
+        return ROLES[1] if self.role == ROLES[0] else ROLES[0]
+
     # ------------------------------------------------------------------ #
     # أدوات داخلية
     # ------------------------------------------------------------------ #

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>المراسلة الآمنة</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6eb;
+    --me: #d9f2e3; --me-text: #0f3d24; --peer: #ffffff; --accent: #1f7a4d; --warn: #b54708;
+    --bad: #b42318; --chip: #eef1f5; --pending: #fff7e6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --line: #2b3240;
+      --me: #1d4d36; --me-text: #dff5e8; --peer: #232a36; --accent: #4cc38a; --warn: #f5a524;
+      --bad: #f97066; --chip: #262d3a; --pending: #3a3020;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", Tahoma, "Noto Sans Arabic", Arial, sans-serif;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 12px 16px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+  .ok { color: var(--accent); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .fp { font-family: ui-monospace, Consolas, monospace; direction: ltr; unicode-bidi: isolate; }
+  main { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: min(560px, 85%); padding: 8px 12px; border-radius: 14px; line-height: 1.6;
+         white-space: pre-wrap; word-wrap: break-word; border: 1px solid var(--line); }
+  .me { align-self: flex-start; background: var(--me); color: var(--me-text); border-color: transparent; }
+  .peer { align-self: flex-end; background: var(--peer); }
+  .pending { align-self: flex-start; background: var(--pending); border-style: dashed; }
+  .system { align-self: center; background: transparent; border: none; color: var(--muted);
+            font-size: 13px; text-align: center; max-width: 90%; }
+  .time { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  footer { background: var(--panel); border-top: 1px solid var(--line); padding: 10px 16px; }
+  form { display: flex; gap: 8px; }
+  textarea { flex: 1; resize: none; height: 46px; border-radius: 10px; border: 1px solid var(--line);
+             padding: 10px; font: inherit; background: var(--bg); color: var(--text); }
+  button { border: 0; border-radius: 10px; padding: 0 18px; background: var(--accent); color: #fff;
+           font: inherit; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">المراسلة الآمنة</h1>
+  <div class="chips">
+    <span class="chip" id="handshake">المصافحة: …</span>
+    <span class="chip">بصمة المفتاح: <span class="fp" id="fingerprint">—</span></span>
+    <span class="chip" id="bus">الحافلة التالية: …</span>
+    <span class="chip" id="relay">الخادم: …</span>
+  </div>
+</header>
+<main id="messages" aria-live="polite"></main>
+<footer>
+  <form id="form">
+    <textarea id="text" placeholder="اكتب رسالتك… (Enter للإرسال، Shift+Enter لسطر جديد)" autofocus></textarea>
+    <button id="send" type="submit">أرسل</button>
+  </form>
+  <div class="note"><span id="count"></span> · الرسالة تنتظر الحافلة التالية ثم تنطلق مشفّرة.
+    الرسائل تُحفظ في الذاكرة فقط وتختفي عند إغلاق التطبيق.</div>
+</footer>
+<script>
+  const TOKEN = "__TOKEN__";
+  const box = document.getElementById("messages");
+  const text = document.getElementById("text");
+  let after = 0, maxText = 2898, pendingNodes = [];
+
+  function bubble(kind, content, time) {
+    const div = document.createElement("div");
+    div.className = "msg " + kind;
+    div.textContent = content;
+    if (time) {
+      const t = document.createElement("span");
+      t.className = "time";
+      t.textContent = time;
+      div.appendChild(t);
+    }
+    return div;
+  }
+
+  function nearBottom() { return box.scrollHeight - box.scrollTop - box.clientHeight < 80; }
+
+  async function refresh() {
+    let s;
+    try {
+      const r = await fetch("/api/state?after=" + after, {headers: {"X-Token": TOKEN}});
+      s = await r.json();
+    } catch (e) { return; }
+    const stick = nearBottom();
+    document.getElementById("title").textContent =
+      "المراسلة الآمنة" + (s.name ? " — " + s.name : "");
+    const hs = document.getElementById("handshake");
+    if (!s.role) { hs.textContent = "بانتظار أول مفتاح من الخزنة"; hs.className = "chip warn"; }
+    else if (s.ready && s.confirmed) { hs.textContent = "المصافحة: مكتملة ✓ (X25519 + ML-KEM)"; hs.className = "chip ok"; }
+    else { hs.textContent = "المصافحة: جارية…"; hs.className = "chip warn"; }
+    document.getElementById("fingerprint").textContent = s.fingerprint || "—";
+    document.getElementById("bus").textContent =
+      "الحافلة التالية بعد " + Math.ceil(s.next_bus) + " ث";
+    const relay = document.getElementById("relay");
+    relay.textContent = s.relay_ok === false ? "الخادم: غير متصل" : "الخادم: متصل";
+    relay.className = "chip " + (s.relay_ok === false ? "bad" : "ok");
+    maxText = s.max_text;
+
+    pendingNodes.forEach(n => n.remove());
+    for (const m of s.messages) {
+      box.appendChild(bubble(m.who === "me" ? "me" : m.who === "peer" ? "peer" : "system",
+                             m.text, m.who === "system" ? m.time : m.time));
+      after = m.id;
+    }
+    pendingNodes = s.queue.map(q => bubble("pending", q, "⏳ تنتظر الحافلة"));
+    pendingNodes.forEach(n => box.appendChild(n));
+    if (stick) box.scrollTop = box.scrollHeight;
+  }
+
+  function updateCount() {
+    const n = new TextEncoder().encode(text.value).length;
+    document.getElementById("count").textContent = n + " / " + maxText + " بايت";
+    document.getElementById("send").disabled = n === 0 || n > maxText;
+  }
+
+  document.getElementById("form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const value = text.value;
+    if (!value.trim()) return;
+    const r = await fetch("/api/send", {
+      method: "POST",
+      headers: {"X-Token": TOKEN, "Content-Type": "application/json"},
+      body: JSON.stringify({text: value}),
+    });
+    const result = await r.json();
+    if (result.ok) { text.value = ""; updateCount(); refresh(); }
+    else alert(result.error);
+  });
+  text.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); document.getElementById("form").requestSubmit(); }
+  });
+  text.addEventListener("input", updateCount);
+  updateCount();
+  refresh();
+  setInterval(refresh, 1000);
+</script>
+</body>
+</html>
