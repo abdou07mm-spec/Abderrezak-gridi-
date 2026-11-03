@@ -178,6 +178,11 @@ class MessengerEngine(
 
     fun enqueue(text: String) = synchronized(lock) { bus.enqueue(text, Instant.now()) }
 
+    /** صناديق محادثتنا (الاتجاهان، كل الفترات المعروفة): الهاتف المضيف يقبلها دون حصة. */
+    fun knownMailboxes(): Set<String> = synchronized(lock) {
+        node.epochs.values.flatMap { listOf(OnlineNode.mailboxFor(it, "A"), OnlineNode.mailboxFor(it, "B")) }.toSet()
+    }
+
     /** دورة واحدة: إطلاق الحافلات، والإرسال، وتفقّد الصندوق. */
     fun step(now: Instant = Instant.now()) {
         val relay = relay ?: return

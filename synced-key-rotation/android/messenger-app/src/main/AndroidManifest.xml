@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- الجهة الأونلاين: تتصل بخادم الترحيل، وتستلم المفاتيح من الخزنة الأوفلاين فقط. -->
+<!-- الجهة الأونلاين: تتصل بصندوق البريد (أو تستضيفه عبر Tor)، وتستلم المفاتيح من الخزنة الأوفلاين فقط. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- إبقاء المعالج مستيقظًا للحافلة ولصندوق البريد، والعودة بعد إعادة تشغيل الهاتف (أذونات عادية تلقائية) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- الإذن الخاص بين التطبيقين (نفس التوقيع فقط، يُمنح تلقائيًا) -->
     <permission
@@ -40,6 +43,15 @@
             android:permission="org.syncedkeys.permission.KEYS">
             <intent-filter>
                 <action android:name="org.syncedkeys.action.VAULT_KEY" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".StartupReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

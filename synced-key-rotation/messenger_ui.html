@@ -52,28 +52,69 @@
   #setup h2 { font-size: 16px; margin: 0; }
   #setup input[type=url], #setup input[type=text] { border-radius: 10px; border: 1px solid var(--line);
            padding: 10px; font: inherit; background: var(--bg); color: var(--text); }
-  #setup button { padding: 10px; }
+  #setup button, #hostPanel button { padding: 10px; }
+  .choice { display: flex; gap: 8px; align-items: flex-start; padding: 10px; border: 1px solid var(--line);
+            border-radius: 10px; cursor: pointer; }
+  .choice input { margin-top: 4px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row button { flex: 1; }
+  button.secondary { background: var(--chip); color: var(--text); }
+  #hostPanel { background: var(--panel); border-bottom: 1px solid var(--line); padding: 12px 16px;
+               display: flex; flex-direction: column; gap: 8px; }
+  #hostPanel[hidden] { display: none; }
+  .addr { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+          word-break: break-all; font-size: 14px; }
+  .titlebar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  #settingsBtn { padding: 6px 12px; background: var(--chip); color: var(--text); }
+  .chip.click { cursor: pointer; text-decoration: underline dotted; }
 </style>
 </head>
 <body>
 <header>
-  <h1 id="title">المراسلة الآمنة</h1>
+  <div class="titlebar">
+    <h1 id="title">المراسلة الآمنة</h1>
+    <button id="settingsBtn" type="button" hidden>⚙ الإعداد</button>
+  </div>
   <div class="chips">
     <span class="chip" id="handshake">المصافحة: …</span>
     <span class="chip">بصمة المفتاح: <span class="fp" id="fingerprint">—</span></span>
     <span class="chip" id="bus">الحافلة التالية: …</span>
-    <span class="chip" id="relay">الخادم: …</span>
+    <span class="chip" id="relay">صندوق البريد: …</span>
+    <span class="chip" id="tor" hidden>Tor: …</span>
     <span class="chip" id="offline">الجهة الأوفلاين: …</span>
   </div>
 </header>
 <section id="setup" hidden>
-  <h2>الإعداد (مرة واحدة)</h2>
-  <p class="note">أدخل عنوان خادم الترحيل الذي يعمل عندك، مثلًا على حاسوب في شبكة الـ Wi-Fi نفسها:
-    http://192.168.1.15:8000 (ضع عنوان حاسوبك). يجب أن يستعمل الطرفان العنوان نفسه.</p>
-  <input id="relayUrl" type="url" placeholder="http://192.168.1.15:8000" dir="ltr">
+  <h2>أين صندوق البريد؟</h2>
+  <p class="note">الرسائل المقفلة تنتظر في «صندوق بريد» حتى يأخذها الطرف الآخر. يكفي أن يكون الصندوق
+    في هاتف واحد منكما: اختر هنا «هذا الهاتف»، واختر في الهاتف الآخر «عند الطرف الآخر».</p>
+  <label class="choice"><input type="radio" name="mode" value="host" id="modeHost">
+    <span><b>هذا الهاتف هو صندوق البريد</b><br>
+    <span class="note">يحصل على عنوان في شبكة Tor ينتهي بـ ‎.onion. ترسله للطرف الآخر فيصل إليك من أي مكان
+      في العالم، دون أن يعرف أحد عنوانك الحقيقي. يجب أن يبقى هذا الهاتف متصلًا بالإنترنت.</span></span></label>
+  <label class="choice"><input type="radio" name="mode" value="remote" id="modeRemote">
+    <span><b>صندوق البريد عند الطرف الآخر</b><br>
+    <span class="note">الصق العنوان الذي أرسله لك (ينتهي بـ ‎.onion)، أو عنوان خادم يبدأ بـ http://</span></span></label>
+  <input id="relayUrl" type="text" placeholder="……….onion" dir="ltr" autocomplete="off"
+         autocapitalize="off" spellcheck="false" hidden>
   <input id="myName" type="text" placeholder="اسمك (للعرض فقط)">
   <label><input id="fastMode" type="checkbox"> وضع التجربة السريع (حافلة كل بضع ثوانٍ)</label>
-  <button id="saveSetup" type="button">حفظ</button>
+  <div class="row">
+    <button id="saveSetup" type="button">حفظ</button>
+    <button id="cancelSetup" type="button" class="secondary" hidden>إلغاء</button>
+  </div>
+</section>
+<section id="hostPanel" hidden>
+  <div><b>صندوق البريد في هذا الهاتف.</b> أرسل هذا العنوان للطرف الآخر ليلصقه في إعداده:</div>
+  <div class="addr fp" id="onionAddr">يُنشأ العنوان بعد اتصال Tor…</div>
+  <div class="row">
+    <button id="copyAddr" type="button">نسخ</button>
+    <button id="shareAddr" type="button">مشاركة</button>
+  </div>
+  <div class="note" id="hostStatus"></div>
+  <div class="note">ابقِ هذا الهاتف متصلًا والتطبيق يعمل: إن انطفأ، تنتظر رسائل الطرف الآخر في هاتفه حتى يعود.
+    اجعل البطارية «بلا قيود» لهذا التطبيق حتى لا يوقفه النظام.</div>
+  <button id="battery" type="button" class="secondary">إعدادات البطارية</button>
 </section>
 <main id="messages" aria-live="polite"></main>
 <footer>
@@ -107,6 +148,23 @@
   const box = document.getElementById("messages");
   const text = document.getElementById("text");
   let after = 0, maxText = 2898, pendingNodes = [];
+  let editing = false, filled = false, showHost = false, lastState = null;
+
+  function chosenMode() {
+    const checked = document.querySelector("input[name=mode]:checked");
+    return checked ? checked.value : "";
+  }
+  function updateModeFields() {
+    document.getElementById("relayUrl").hidden = chosenMode() !== "remote";
+  }
+  function fillSetup(s) {
+    filled = true;
+    if (s.mode) document.getElementById(s.mode === "host" ? "modeHost" : "modeRemote").checked = true;
+    document.getElementById("relayUrl").value = s.address || "";
+    document.getElementById("myName").value = s.name || "";
+    document.getElementById("fastMode").checked = !!s.fast;
+    updateModeFields();
+  }
 
   function bubble(kind, content, time) {
     const div = document.createElement("div");
@@ -123,12 +181,23 @@
 
   function nearBottom() { return box.scrollHeight - box.scrollTop - box.clientHeight < 80; }
 
+  let refreshing = false;
   async function refresh() {
+    if (refreshing) return;              // استدعاءان متداخلان قد يضيفان الرسائل نفسها مرتين
+    refreshing = true;
+    try { await render(); } finally { refreshing = false; }
+  }
+
+  async function render() {
     let s;
     try {
       s = await api.state(after);
     } catch (e) { return; }
-    document.getElementById("setup").hidden = !s.needs_setup;
+    const setupOpen = !!(s.needs_setup || editing);
+    document.getElementById("setup").hidden = !setupOpen;
+    if (setupOpen && !filled) fillSetup(s);
+    document.getElementById("cancelSetup").hidden = !!s.needs_setup;
+    document.getElementById("settingsBtn").hidden = !bridge || setupOpen;
     const stick = nearBottom();
     document.getElementById("title").textContent =
       "المراسلة الآمنة" + (s.name ? " — " + s.name : "");
@@ -140,10 +209,34 @@
     document.getElementById("bus").textContent =
       "الحافلة التالية بعد " + Math.ceil(s.next_bus) + " ث";
     const relay = document.getElementById("relay");
-    if (s.needs_setup) { relay.textContent = "الخادم: لم يُضبط بعد"; relay.className = "chip warn"; }
-    else if (s.relay_ok === true) { relay.textContent = "الخادم: متصل"; relay.className = "chip ok"; }
-    else if (s.relay_ok === false) { relay.textContent = "الخادم: غير متصل"; relay.className = "chip bad"; }
-    else { relay.textContent = "الخادم: بانتظار أول اتصال"; relay.className = "chip warn"; }
+    const tor = s.tor || null;
+    const host = s.mode === "host";
+    if (s.needs_setup) { relay.textContent = "صندوق البريد: لم يُضبط بعد"; relay.className = "chip warn"; }
+    else if (host) { relay.textContent = "صندوق البريد: في هذا الهاتف"; relay.className = "chip ok click"; }
+    else if (s.relay_ok === true) { relay.textContent = "صندوق البريد: متصل"; relay.className = "chip ok"; }
+    else if (tor && tor.state !== "on") { relay.textContent = "صندوق البريد: بانتظار Tor"; relay.className = "chip warn"; }
+    else if (s.relay_ok === false) { relay.textContent = "صندوق البريد: غير متاح الآن"; relay.className = "chip bad"; }
+    else { relay.textContent = "صندوق البريد: بانتظار أول اتصال"; relay.className = "chip warn"; }
+
+    const torChip = document.getElementById("tor");
+    torChip.hidden = !tor || tor.state === "off";
+    if (tor && tor.state === "on") { torChip.textContent = "Tor: متصل ✓"; torChip.className = "chip ok"; }
+    else if (tor && tor.state === "error") { torChip.textContent = "Tor: " + tor.error; torChip.className = "chip bad"; }
+    else if (tor) { torChip.textContent = "Tor: جارٍ الاتصال… " + tor.progress + "%"; torChip.className = "chip warn"; }
+
+    const panel = document.getElementById("hostPanel");
+    panel.hidden = !host || !(showHost || !(s.ready && s.confirmed));
+    if (host && tor) {
+      document.getElementById("onionAddr").textContent = tor.onion || "يُنشأ العنوان بعد اتصال Tor…";
+      document.getElementById("copyAddr").disabled = !tor.onion;
+      document.getElementById("shareAddr").disabled = !tor.onion;
+      const st = document.getElementById("hostStatus");
+      if (tor.state !== "on") st.textContent = "⏳ الاتصال بشبكة Tor (أول مرة قد تستغرق دقيقة أو أكثر)…";
+      else if (tor.reachable === true) st.textContent = "✓ صندوقك منشور: يمكن الوصول إليه من أي مكان.";
+      else if (tor.reachable === false) st.textContent = "✗ لم نصل إلى صندوقك عبر Tor بعد. تأكد من الإنترنت، ونعيد المحاولة وحدنا.";
+      else st.textContent = "⏳ نشر العنوان على شبكة Tor (من دقيقة إلى ثلاث)…";
+    }
+    lastState = s;
     maxText = s.max_text;
     const off = document.getElementById("offline");
     if (!s.offline) { off.textContent = "الجهة الأوفلاين: لا تعمل"; off.className = "chip bad"; }
@@ -181,11 +274,27 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); document.getElementById("form").requestSubmit(); }
   });
   text.addEventListener("input", updateCount);
+  document.querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", updateModeFields));
   document.getElementById("saveSetup").addEventListener("click", () => {
-    const result = JSON.parse(bridge.configure(document.getElementById("relayUrl").value,
+    if (!chosenMode()) { alert("اختر أين يكون صندوق البريد"); return; }
+    const result = JSON.parse(bridge.configure(chosenMode(), document.getElementById("relayUrl").value,
       document.getElementById("myName").value, document.getElementById("fastMode").checked));
-    if (!result.ok) alert(result.error); else refresh();
+    if (!result.ok) { alert(result.error); return; }
+    editing = false; filled = false; showHost = chosenMode() === "host";
+    refresh();
   });
+  document.getElementById("cancelSetup").addEventListener("click", () => { editing = false; filled = false; refresh(); });
+  document.getElementById("settingsBtn").addEventListener("click", () => { editing = true; filled = false; refresh(); });
+  document.getElementById("relay").addEventListener("click", () => {
+    if (lastState && lastState.mode === "host") { showHost = !showHost; refresh(); }
+  });
+  document.getElementById("copyAddr").addEventListener("click", () => {
+    bridge.copyAddress();
+    const b = document.getElementById("copyAddr");
+    b.textContent = "نُسخ ✓"; setTimeout(() => { b.textContent = "نسخ"; }, 2000);
+  });
+  document.getElementById("shareAddr").addEventListener("click", () => bridge.shareAddress());
+  document.getElementById("battery").addEventListener("click", () => bridge.openBatterySettings());
   updateCount();
   refresh();
   setInterval(refresh, 1000);

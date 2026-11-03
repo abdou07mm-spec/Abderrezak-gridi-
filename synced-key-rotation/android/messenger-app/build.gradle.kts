@@ -18,8 +18,10 @@ android {
         applicationId = "org.syncedkeys.messenger"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 3
+        versionName = "0.3"
+        // Tor مبني لمعالجات الهواتف فقط (يصغّر التطبيق)
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -38,6 +40,10 @@ tasks.named("preBuild") { dependsOn(copyUi) }
 
 dependencies {
     implementation(project(":core"))
+    // Tor الرسمي لأندرويد (Guardian Project / The Tor Project): يعمل داخل التطبيق، بلا تطبيق آخر.
+    // سلسلة 0.4.8 (طويلة الدعم): إصدارات 0.4.9 تتطلب compileSdk 37 وأداة بناء أحدث.
+    implementation("info.guardianproject:tor-android:0.4.8.22")
+    implementation("info.guardianproject:jtorctl:0.4.5.7")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.17")
 }

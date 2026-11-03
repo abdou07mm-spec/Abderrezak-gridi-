@@ -2,8 +2,11 @@ package org.syncedkeys.messenger
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -32,8 +35,12 @@ class MainActivity : Activity() {
 
     inner class Bridge {
         @JavascriptInterface
-        fun state(after: Int): String =
-            app.engine.snapshot(after).put("needs_setup", app.relayUrl == null).toString()
+        fun state(after: Int): String {
+            val state = app.engine.snapshot(after)
+            val extra = app.extraState()
+            extra.keys().forEach { state.put(it, extra.get(it)) }
+            return state.toString()
+        }
 
         @JavascriptInterface
         fun send(text: String): String = try {
@@ -45,12 +52,43 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
-        fun configure(relay: String, name: String, fast: Boolean): String {
-            if (!relay.startsWith("http://") && !relay.startsWith("https://")) {
-                return JSONObject().put("ok", false).put("error", "عنوان الخادم يجب أن يبدأ بـ https://").toString()
+        fun configure(mode: String, address: String, name: String, fast: Boolean): String = try {
+            app.configure(mode, address, name, fast)
+            JSONObject().put("ok", true).toString()
+        } catch (e: IllegalArgumentException) {
+            JSONObject().put("ok", false).put("error", e.message).toString()
+        }
+
+        /** نسخ عنوان صندوق البريد (للصقه في أي تطبيق مراسلة). */
+        @JavascriptInterface
+        fun copyAddress() {
+            val address = app.tor.onion ?: return
+            runOnUiThread {
+                getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("عنوان صندوق البريد", address))
             }
-            app.configure(relay, name, fast)
-            return JSONObject().put("ok", true).toString()
+        }
+
+        @JavascriptInterface
+        fun shareAddress() {
+            val address = app.tor.onion ?: return
+            val text = "عنوان صندوق البريد للمراسلة الآمنة (الصقه في الإعداد ← «صندوق البريد عند الطرف الآخر»):\n$address"
+            runOnUiThread {
+                startActivity(Intent.createChooser(
+                    Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "أرسل العنوان"))
+            }
+        }
+
+        /** الهاتف المضيف يجب ألا يوقفه توفير البطارية. */
+        @JavascriptInterface
+        fun openBatterySettings() {
+            runOnUiThread {
+                try {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
+            }
         }
     }
 }

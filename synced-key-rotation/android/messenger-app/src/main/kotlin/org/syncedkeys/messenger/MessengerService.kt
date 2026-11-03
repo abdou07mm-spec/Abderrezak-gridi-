@@ -8,13 +8,17 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 
 /**
  * خدمة في المقدمة تُبقي الحافلة تعمل حين يكون التطبيق في الخلفية:
  * حزمة في مواعيد عشوائية، وتفقّد الصندوق، تكلمتَ أو صمتّ.
+ * تُبقي المعالج مستيقظًا (والشاشة مطفأة): بدونه تتوقف الحافلة حين ينام الهاتف، ويختفي
+ * صندوق البريد عن الطرف الآخر إذا كان هذا الهاتف هو المضيف.
  */
 class MessengerService : Service() {
     @Volatile private var running = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -33,9 +37,16 @@ class MessengerService : Service() {
         }
         if (!running) {
             running = true
+            val lock = getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "syncedkeys:bus")
+                .apply { setReferenceCounted(false) }
+            wakeLock = lock
             Thread {
                 val app = application as MessengerApp
+                var renewed = 0L
                 while (running) {
+                    val now = System.currentTimeMillis()
+                    if (now - renewed > 60_000) { lock.acquire(WAKE_MS); renewed = now }   // يُجدَّد كل دقيقة
                     try { app.engine.step() } catch (e: Exception) { /* المحرك يسجّل أخطاءه بنفسه */ }
                     Thread.sleep(500)
                 }
@@ -46,6 +57,11 @@ class MessengerService : Service() {
 
     override fun onDestroy() {
         running = false
+        wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
+    }
+
+    companion object {
+        private const val WAKE_MS = 10 * 60_000L
     }
 }
