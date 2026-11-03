@@ -42,6 +42,24 @@ class KeyReceiverTest {
         assertEquals(1, app.engine.snapshot(0).getJSONArray("messages").length())
     }
 
+    @Test fun `re-pairing in the vault is adopted instead of rejected`() {
+        // ما حدث فعلًا على هاتف: اقتران أول، ثم اقتران جديد في الخزنة
+        val (first, _) = keyIntent()
+        KeyReceiver().onReceive(app, first)
+        val oldPair = app.engine.node.pairId
+        app.engine.enqueue("رسالة كُتبت قبل الاقتران الجديد")
+        val (second, epoch) = keyIntent()
+        KeyReceiver().onReceive(app, second)
+        val newPair = second.getStringExtra("pair_id")
+        assertTrue(oldPair != newPair)
+        assertEquals(newPair, app.engine.node.pairId)
+        assertEquals(setOf(epoch), app.engine.node.epochs.keys)
+        val texts = (0 until app.engine.log.size).map { app.engine.log[it].getString("text") }
+        assertTrue(texts.any { it.contains("اقتران جديد") })
+        assertTrue(texts.none { it.contains("تعذّر") })                 // لا رسالة خطأ
+        assertEquals(1, app.engine.bus.queue.size)                       // الرسالة المكتوبة لم تضِع
+    }
+
     @Test fun `incomplete intents are ignored`() {
         KeyReceiver().onReceive(app, Intent("org.syncedkeys.action.VAULT_KEY").putExtra("epoch", 3))
         assertTrue(app.engine.node.epochs.isEmpty())

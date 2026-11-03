@@ -57,7 +57,8 @@ class InteropTest {
         assertEquals(seed.toHex(), decoded.getString("seed"))
         val back = Vault.decodePairingCode(pythonCode)
         assertEquals(t0, back.epochStart)
-        assertFailsWith<VaultError> { Vault.decodePairingCode(pythonCode.dropLast(1) + "Q") }
+        val typo = pythonCode.substring(0, 10) + (if (pythonCode[10] == 'A') 'B' else 'A') + pythonCode.substring(11)
+        assertFailsWith<VaultError> { Vault.decodePairingCode(typo) }
     }
 
     @Test fun `secret schedule and vault keys match python`() {

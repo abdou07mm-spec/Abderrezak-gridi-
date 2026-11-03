@@ -65,6 +65,8 @@ class KeyReceiver : BroadcastReceiver() {
             intent.getIntExtra("epoch", -1), Instant.ofEpochSecond(intent.getLongExtra("valid_from", 0)),
             Instant.ofEpochSecond(intent.getLongExtra("valid_until", 0)), key)
         val app = context.applicationContext as MessengerApp
-        app.engine.deliverKey(bundle, intent.getStringExtra("isolation") ?: "software", Instant.now())
+        // المرسل موثوق: لا يصل إلى هنا إلا تطبيق يحمل الإذن الخاص (أي خزنتنا بالتوقيع نفسه)
+        app.engine.deliverKey(bundle, intent.getStringExtra("isolation") ?: "software", Instant.now(),
+            adoptNewPairing = true)
     }
 }

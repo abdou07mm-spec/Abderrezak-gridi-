@@ -68,8 +68,9 @@
 </header>
 <section id="setup" hidden>
   <h2>الإعداد (مرة واحدة)</h2>
-  <p class="note">افتح أولًا تطبيق "الخزنة الأوفلاين" وأتمّ الاقتران، ثم أدخل هنا عنوان خادم الترحيل.</p>
-  <input id="relayUrl" type="url" placeholder="https://relay.example.org" dir="ltr">
+  <p class="note">أدخل عنوان خادم الترحيل الذي يعمل عندك، مثلًا على حاسوب في شبكة الـ Wi-Fi نفسها:
+    http://192.168.1.15:8000 (ضع عنوان حاسوبك). يجب أن يستعمل الطرفان العنوان نفسه.</p>
+  <input id="relayUrl" type="url" placeholder="http://192.168.1.15:8000" dir="ltr">
   <input id="myName" type="text" placeholder="اسمك (للعرض فقط)">
   <label><input id="fastMode" type="checkbox"> وضع التجربة السريع (حافلة كل بضع ثوانٍ)</label>
   <button id="saveSetup" type="button">حفظ</button>
@@ -139,8 +140,10 @@
     document.getElementById("bus").textContent =
       "الحافلة التالية بعد " + Math.ceil(s.next_bus) + " ث";
     const relay = document.getElementById("relay");
-    relay.textContent = s.relay_ok === false ? "الخادم: غير متصل" : "الخادم: متصل";
-    relay.className = "chip " + (s.relay_ok === false ? "bad" : "ok");
+    if (s.needs_setup) { relay.textContent = "الخادم: لم يُضبط بعد"; relay.className = "chip warn"; }
+    else if (s.relay_ok === true) { relay.textContent = "الخادم: متصل"; relay.className = "chip ok"; }
+    else if (s.relay_ok === false) { relay.textContent = "الخادم: غير متصل"; relay.className = "chip bad"; }
+    else { relay.textContent = "الخادم: بانتظار أول اتصال"; relay.className = "chip warn"; }
     maxText = s.max_text;
     const off = document.getElementById("offline");
     if (!s.offline) { off.textContent = "الجهة الأوفلاين: لا تعمل"; off.className = "chip bad"; }

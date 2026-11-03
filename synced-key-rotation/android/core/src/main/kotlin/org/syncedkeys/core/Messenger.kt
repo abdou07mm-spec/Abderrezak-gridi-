@@ -147,10 +147,24 @@ class MessengerEngine(
         if (text != lastError) { lastError = text; note("system", text, now) }
     }
 
-    /** مفتاح فترة وصل من الجهة الأوفلاين (مع نبضتها). */
-    fun deliverKey(bundle: KeyBundle, isolation: String, now: Instant) = synchronized(lock) {
+    /**
+     * مفتاح فترة وصل من الجهة الأوفلاين (مع نبضتها).
+     * adoptNewPairing: إذا كان المصدر موثوقًا (في أندرويد: تطبيق بالتوقيع نفسه فقط) وجاء
+     * مفتاح من اقتران جديد، نترك الاقتران القديم ونبدأ من جديد بدل رفض كل المفاتيح.
+     */
+    fun deliverKey(bundle: KeyBundle, isolation: String, now: Instant, adoptNewPairing: Boolean = false) = synchronized(lock) {
         offlineIsolation = isolation
         offlineHeartbeat = now
+        val oldPair = node.pairId
+        if (adoptNewPairing && oldPair != null && oldPair != bundle.pairId) {
+            node.pairId = null
+            node.role = null
+            node.epochs.clear()
+            outbox.clear()                 // حزم الاقتران القديم لم تعد مفهومة لأحد
+            lastPeerBox = null
+            skewWarned.clear()
+            note("system", "اقتران جديد في الخزنة (بصمة ${bundle.pairId}): نُسي الاقتران السابق وبدأنا من جديد.", now)
+        }
         val known = node.epochs.containsKey(bundle.epoch)
         try {
             node.importBundle(bundle, now)

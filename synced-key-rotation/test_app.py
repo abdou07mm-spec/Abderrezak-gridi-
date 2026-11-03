@@ -266,7 +266,8 @@ class InstalledAppTest(unittest.TestCase):
         import secure_app
         from offline_vault import VaultError
         code, _ = secure_app.create(self.tmp / "a", now=T0)
-        typo = code[:-1] + ("A" if code[-1] != "A" else "B")
+        # خطأ في وسط الرمز (الحرف الأخير يحمل بتّين فقط، فبعض تغييراته لا تغيّر المحتوى أصلًا)
+        typo = code[:10] + ("A" if code[10] != "A" else "B") + code[11:]
         with self.assertRaises(VaultError):
             secure_app.join(self.tmp / "b", typo)
         secure_app.join(self.tmp / "b", code)
