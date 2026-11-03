@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+ROLES = ("A", "B")  # الطرف الأول والطرف الثاني في الزوج
 
 
 def utc_now() -> datetime:

@@ -26,6 +26,10 @@
   - من يملك البذرة نفسها يحصل على المفتاح نفسه بالضبط في الوقت نفسه،
     دون أي تواصل بين الطرفين (مثل تطبيق Google Authenticator).
   - الأسهم تسير في اتجاه واحد فقط: لا يمكن الرجوع من سلسلة(3) إلى سلسلة(2).
+
+ملاحظة: مفتاح الخزنة ليس المفتاح النهائي للرسائل. النظام المتصل يمزجه مع سرّ
+عشوائي جديد يُتفق عليه كل يوم بتبادل Diffie-Hellman (انظر online_node.py)،
+فلو سُرقت الخزنة نفسها يبقى السارق عاجزًا عن قراءة رسائل الأيام التالية.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ from pathlib import Path
 
 from common import (
     FORMAT_VERSION,
+    ROLES,
     Schedule,
     fingerprint,
     read_json,
@@ -79,12 +84,15 @@ class OfflineVault:
     """الخزنة غير المتصلة: تحفظ حالة السلسلة الحالية فقط."""
 
     def __init__(self, path: Path, schedule: Schedule, epoch: int,
-                 chain_key: bytes, pair_id: str):
+                 chain_key: bytes, pair_id: str, role: str):
+        if role not in ROLES:
+            raise VaultError(f"دور غير معروف: {role}")
         self.path = Path(path)
         self.schedule = schedule
         self.epoch = epoch
         self.chain_key = chain_key
         self.pair_id = pair_id
+        self.role = role  # "A" لمن أنشأ الاقتران، "B" للطرف الآخر
 
     # ------------------------------------------------------------------ #
     # الإنشاء والتخزين
@@ -110,8 +118,8 @@ class OfflineVault:
         pair_id = fingerprint(seed, "pair")
         epoch = schedule.epoch_at(now)
 
-        vaults = tuple(cls(path, schedule, epoch, seed, pair_id)
-                       for path in (my_path, peer_path))
+        vaults = tuple(cls(path, schedule, epoch, seed, pair_id, role)
+                       for path, role in zip((my_path, peer_path), ROLES))
         for vault in vaults:
             vault.save()
         return vaults  # type: ignore[return-value]
@@ -120,12 +128,13 @@ class OfflineVault:
     def load(cls, path: Path) -> "OfflineVault":
         data = read_json(path)
         if data.get("format") != "offline-vault" or data.get("version") != FORMAT_VERSION:
-            raise VaultError(f"هذا الملف ليس خزنة صالحة: {path}")
+            raise VaultError(f"هذا الملف ليس خزنة صالحة: {path} "
+                             "(إذا أُنشئ بإصدار سابق من البرنامج فأعد الاقتران)")
         chain_key = bytes.fromhex(data["chain_key"])
         if len(chain_key) != SEED_BYTES:
             raise VaultError("حالة الخزنة تالفة")
         return cls(Path(path), Schedule.from_dict(data["schedule"]),
-                   int(data["epoch"]), chain_key, data["pair_id"])
+                   int(data["epoch"]), chain_key, data["pair_id"], data["role"])
 
     def save(self) -> None:
         # الكتابة فوق الحالة القديمة = إتلافها
@@ -133,6 +142,7 @@ class OfflineVault:
             "format": "offline-vault",
             "version": FORMAT_VERSION,
             "pair_id": self.pair_id,
+            "role": self.role,
             "schedule": self.schedule.to_dict(),
             "epoch": self.epoch,
             "chain_key": self.chain_key.hex(),
@@ -165,6 +175,7 @@ class OfflineVault:
             "format": "key-bundle",
             "version": FORMAT_VERSION,
             "pair_id": self.pair_id,
+            "role": self.role,
             "schedule": self.schedule.to_dict(),
             "epoch": self.epoch,
             "valid_from": self.schedule.start_of(self.epoch).isoformat(),
@@ -206,13 +217,14 @@ def _cmd_release(args: argparse.Namespace) -> None:
     print(f"تم إخراج مفتاح الحقبة {bundle['epoch']} إلى: {path}")
     print(f"  صالح من {stamp(datetime.fromisoformat(bundle['valid_from']))} "
           f"إلى {stamp(datetime.fromisoformat(bundle['valid_until']))}")
-    print(f"  بصمة المفتاح: {key_fingerprint(bytes.fromhex(bundle['key']))} "
+    print(f"  بصمة مفتاح الخزنة: {key_fingerprint(bytes.fromhex(bundle['key']))} "
           "(يجب أن تطابق بصمة الطرف الآخر لنفس الحقبة)")
 
 
 def _cmd_status(args: argparse.Namespace) -> None:
     vault = OfflineVault.load(args.vault)
     print(f"بصمة الزوج:   {vault.pair_id}")
+    print(f"الدور:        {vault.role}")
     print(f"حالة السلسلة: الحقبة {vault.epoch}")
     print(f"الحقبة الآن:  {vault.schedule.epoch_at(utc_now())}")
 
