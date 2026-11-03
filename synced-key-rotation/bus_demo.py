@@ -166,7 +166,7 @@ def main() -> None:
         total = len(observer)
         print(f"  انطلقت {total} حزمة: {kinds['message']} تحمل رسائل حقيقية، "
               f"{kinds['dummy']} وهمية، {kinds['handshake']} مصافحات، {kinds['noise']} ضجيج.")
-        print("  المراقب لا يميّز بينها: كلها 1024 بايت ومشفّرة بالكامل.")
+        print(f"  المراقب لا يميّز بينها: كلها {PACKET_BYTES} بايت ومشفّرة بالكامل.")
 
         # ما يراه المراقب ---------------------------------------------------
         slots = int(timedelta(hours=HOURS) / SLOT)

@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import tempfile
@@ -34,7 +35,11 @@ from online_node import (
     PACKET_BYTES,
     chain_message_key,
     decode_packet,
+    _dh,
+    _open_header,
     derive_epoch,
+    kdf_root,
+    kem_unlock,
     layer_keys,
     read_handshake,
 )
@@ -50,6 +55,16 @@ def flip(packet: str, index: int) -> str:
     raw = bytearray(packet.encode())
     raw[index] = ord("A") if raw[index] != ord("A") else ord("B")
     return raw.decode()
+
+
+def shake(a: OnlineNode, b: OnlineNode, now: datetime) -> None:
+    """مصافحة هجينة كاملة: B يرسل قفله المفتوح، ثم A يرسل الصندوق المقفل."""
+    for _ in range(3):
+        b.receive(a.my_handshake(now), now)
+        a.receive(b.my_handshake(now), now)
+        if a.key_fingerprint(now) and b.key_fingerprint(now):
+            return
+    raise AssertionError("المصافحة لم تكتمل")
 
 
 class Base(unittest.TestCase):
@@ -74,8 +89,7 @@ class Base(unittest.TestCase):
         """تغيير كامل عند الموعد السري رقم index: استيراد + مصافحة."""
         now = self.changes[index]
         self.import_both(now)
-        self.node_b.receive(self.node_a.my_handshake(now), now)
-        self.node_a.receive(self.node_b.my_handshake(now), now)
+        shake(self.node_a, self.node_b, now)
         return now
 
 
@@ -175,8 +189,7 @@ class HandshakeTest(Base):
             nb = OnlineNode.open(self.tmp / f"r{run}" / "b.json")
             na.import_bundle(bundle_a, now)
             nb.import_bundle(bundle_b, now)
-            nb.receive(na.my_handshake(now), now)
-            na.receive(nb.my_handshake(now), now)
+            shake(na, nb, now)
             fingerprints.append(na.key_fingerprint(now))
         self.assertNotEqual(fingerprints[0], fingerprints[1])
 
@@ -218,8 +231,7 @@ class HandshakeTest(Base):
         with self.assertRaises(MessageRejected):
             self.node_b.receive(self.node_a.my_handshake(now), now)
         self.node_b.import_bundle(self.vault_b.release_key(later(now, 30)), later(now, 30))
-        self.node_b.receive(self.node_a.my_handshake(now), later(now, 30))
-        self.node_a.receive(self.node_b.my_handshake(now), later(now, 30))
+        shake(self.node_a, self.node_b, later(now, 30))
         packet = self.node_a.send("ok", later(now, 31))
         self.assertEqual(self.node_b.receive(packet, later(now, 31)).text, "ok")
 
@@ -229,43 +241,51 @@ class HandshakeTest(Base):
             state = OnlineNode.open(node.path).epochs[1]
             self.assertIsNone(state.vault_key)
             self.assertIsNone(state.hs_private)
+            self.assertIsNone(state.hs_kem_private)
             self.assertNotIn("epoch_key", node.path.read_text())
         # الطرف A يبدأ السقّاطة بسرّ جديد فورًا، لا بسرّ المصافحة
         state_a = self.node_a.epochs[1]
         self.assertNotEqual(state_a.dhs_public, state_a.hs_public)
 
-    def test_stolen_vault_cannot_read_after_next_handshake(self) -> None:
+    def test_handshake_takes_three_steps(self) -> None:
+        now = self.changes[0]
+        self.import_both(now)
+        first = self.node_b.receive(self.node_a.my_handshake(now), now)
+        self.assertTrue(first.waiting)                       # A لم يصله قفل B بعد: لا صندوق
+        self.node_a.receive(self.node_b.my_handshake(now), now)
+        self.assertIsNotNone(self.node_a.key_fingerprint(now))
+        self.assertIsNone(self.node_b.key_fingerprint(now))
+        self.node_b.receive(self.node_a.my_handshake(now), now)   # الآن يحمل الصندوق
+        self.assertEqual(self.node_a.key_fingerprint(now), self.node_b.key_fingerprint(now))
+
+    def test_epoch_key_needs_all_three_locks(self) -> None:
         """
-        أقوى مخترق صامت: يملك الخزنة المسروقة (أي مفتاح الخزنة الصحيح)، ويفتح
-        المصافحتين المسجّلتين فيحصل على النصفين العامين الحقيقيين. ينقصه فقط
-        المفتاح الخاص الذي وُلد بعد السرقة.
+        مفتاح الفترة = الخزنة + X25519 + ML-KEM. نعطي المخترق اثنين منها بالضبط
+        (مثلًا: سرق الخزنة، ويملك حاسوبًا كمّيًا يكسر X25519) فيبقى عاجزًا.
         """
         self.change(0)
-        stolen = self.tmp / "thief_vault.json"
-        shutil.copy(self.vault_a.path, stolen)
         now = self.changes[1]
         self.import_both(now)
-        hs_a, hs_b = self.node_a.my_handshake(now), self.node_b.my_handshake(now)
-        real_shared = X25519PrivateKey.from_private_bytes(self.node_a.epochs[2].hs_private).exchange(
-            X25519PublicKey.from_public_bytes(self.node_b.epochs[2].hs_public))
-        self.node_b.receive(hs_a, now)
-        self.node_a.receive(hs_b, now)
+        state_a, state_b = self.node_a.epochs[2], self.node_b.epochs[2]
+        vault_key = state_a.vault_key
+        real_dh = _dh(state_a.hs_private, state_b.hs_public)
+        b_kem_private = state_b.hs_kem_private
+        shake(self.node_a, self.node_b, now)
         real_fp = self.node_b.key_fingerprint(now)
-        packet = self.node_a.send("after the theft", later(now, 5))
 
-        vault_key = bytes.fromhex(OfflineVault.load(stolen).release_key(now)["key"])
-        epoch, role_a, pub_a = read_handshake(vault_key, hs_a)
-        _, role_b, pub_b = read_handshake(vault_key, hs_b)
-        self.assertEqual((epoch, role_a, role_b), (2, "A", "B"))
-        # البناء فعلًا يعتمد على سرّ Diffie-Hellman: بالسرّ الحقيقي نحصل على المفتاح نفسه...
-        self.assertEqual(derive_epoch(vault_key, epoch, real_shared, pub_a, pub_b).fingerprint,
-                         real_fp)
-        # ...ودونه تفشل كل محاولات المخترق
-        own_guess = X25519PrivateKey.generate().exchange(X25519PublicKey.from_public_bytes(pub_b))
-        for guess in (bytes(32), own_guess, pub_a, pub_b, vault_key):
-            self.assertNotEqual(derive_epoch(vault_key, epoch, guess, pub_a, pub_b).fingerprint,
-                                real_fp)
-        self.assertEqual(self.node_b.receive(packet, later(now, 5)).text, "after the theft")
+        view_a = read_handshake(vault_key, self.node_a.my_handshake(now))   # من يملك الخزنة يراهما
+        view_b = read_handshake(vault_key, self.node_b.my_handshake(now))
+        real_kem = kem_unlock(b_kem_private, view_a.kem_box)
+
+        def fp(vault: bytes, dh: bytes, kem: bytes) -> str:
+            return derive_epoch(vault, 2, dh, kem, view_a.half, view_b.half,
+                                view_b.kem_public, view_a.kem_box).fingerprint
+
+        wrong = secure_random(32)
+        self.assertEqual(fp(vault_key, real_dh, real_kem), real_fp)     # الثلاثة معًا: صحيح
+        self.assertNotEqual(fp(vault_key, real_dh, wrong), real_fp)    # خزنة + كسر X25519
+        self.assertNotEqual(fp(vault_key, wrong, real_kem), real_fp)   # خزنة + كسر ML-KEM
+        self.assertNotEqual(fp(wrong, real_dh, real_kem), real_fp)     # كسر الخوارزميتين بلا خزنة
 
 
 class MessageTest(Base):
@@ -339,7 +359,8 @@ class MessageTest(Base):
 
     def test_two_independent_layers(self) -> None:
         state = self.node_a.epochs[1]
-        header = HEADER.pack(b"M", FORMAT_VERSION, 1, b"A", state.dhs_public, state.pn, state.ns)
+        header = HEADER.pack(b"M", FORMAT_VERSION, 1, b"A", state.dhs_public, state.pn, state.ns,
+                             state.kem_box_out, state.kem_s_public)
         k_aes, k_chacha = layer_keys(chain_message_key(state.cks))
         packet = self.node_a.send("layered", later(self.now, 1))
         self.assertNotEqual(k_aes, k_chacha)
@@ -353,10 +374,12 @@ class MessageTest(Base):
 
     def test_header_is_hidden(self) -> None:
         state = self.node_a.epochs[1]
-        visible = HEADER.pack(b"M", FORMAT_VERSION, 1, b"A", state.dhs_public, state.pn, state.ns)
+        visible = HEADER.pack(b"M", FORMAT_VERSION, 1, b"A", state.dhs_public, state.pn, state.ns,
+                              state.kem_box_out, state.kem_s_public)
         raw = decode_packet(self.node_a.send("hidden", later(self.now, 1)))
         self.assertNotIn(visible, raw)
         self.assertNotIn(state.dhs_public, raw)   # حتى النصف العام مخفي
+        self.assertNotIn(state.kem_s_public[:64], raw)   # وقفل ML-KEM أيضًا
         self.assertNotIn(b"hidden", raw)
 
     def test_too_many_skipped_messages_rejected(self) -> None:
@@ -421,6 +444,40 @@ class RatchetTest(Base):
             self.node_a.receive(packet, self.at(turn))
             halves.append(self.node_a.epochs[1].dhs_public)
         self.assertEqual(len(set(halves)), len(halves))
+
+    def test_lock_and_half_change_every_turn(self) -> None:
+        locks = []
+        for turn in range(4):
+            self.node_b.receive(self.node_a.send(f"a{turn}", self.at(turn)), self.at(turn))
+            locks.append(self.node_b.epochs[1].kem_s_public)
+            self.node_a.receive(self.node_b.send(f"b{turn}", self.at(turn)), self.at(turn))
+            locks.append(self.node_a.epochs[1].kem_s_public)
+        self.assertEqual(len(set(locks)), len(locks))
+
+    def test_quantum_thief_still_locked_out_by_ml_kem(self) -> None:
+        """
+        نتخيّل حاسوبًا كمّيًا يعطي السارق كل مفاتيح X25519 الخاصة، وقد سرق حالة
+        هاتف B كاملة. يستطيع متابعة السلسلة حتى يولّد B بعد السرقة خطوة جديدة:
+        سرّها يأتي من صندوق مقفل بقفل A، والقفل الخاص لم يغادر هاتف A.
+        """
+        self.node_b.receive(self.node_a.send("hi", self.at(1)), self.at(1))
+        self.node_a.receive(self.node_b.send("hello", self.at(2)), self.at(2))
+        stolen = copy.deepcopy(self.node_b.epochs[1])            # كل ما في هاتف B لحظة السرقة
+
+        packet = self.node_a.send("after theft", self.at(3))
+        fields = HEADER.unpack(_open_header(stolen.header_key, decode_packet(packet)))
+        half_a, box_to_b = fields[4], fields[7]
+        # السارق يتقدّم خطوة: يملك قفل B المسروق، ويحسب X25519 (بالحاسوب الكمّي)
+        root_1, _ = kdf_root(stolen.rk, _dh(stolen.dhs_private, half_a),
+                             kem_unlock(stolen.kem_s_private, box_to_b))
+        self.node_b.receive(packet, self.at(3))                 # B الحقيقي: نصف وقفل جديدان
+        real = self.node_b.epochs[1]
+        dh_by_quantum = _dh(real.dhs_private, half_a)           # الحاسوب الكمّي يكسر X25519 الجديد
+        true_kem = kem_unlock(self.node_a.epochs[1].kem_s_private, real.kem_box_out)
+        self.assertEqual(kdf_root(root_1, dh_by_quantum, true_kem)[0], real.rk)   # البناء صحيح
+        for guess in (bytes(32), secure_random(32),
+                      kem_unlock(stolen.kem_s_private, real.kem_box_out)):
+            self.assertNotEqual(kdf_root(root_1, dh_by_quantum, guess)[0], real.rk)
 
     def test_stolen_device_heals_after_round_trip(self) -> None:
         """السارق يفقد القدرة بمجرد أن يدخل السلسلة نصف وُلد بعد السرقة."""
@@ -573,8 +630,7 @@ class BusTest(Base):
         start = self.change(0)
         change = self.changes[1]
         self.import_both(change)                  # الفترة القديمة انتهت وأُتلفت سلسلة إرسالها
-        self.node_b.receive(self.node_a.my_handshake(change), change)
-        self.node_a.receive(self.node_b.my_handshake(change), change)
+        shake(self.node_a, self.node_b, change)
         before = later(change, -1)               # ثم "رجعت الساعة" دقيقة إلى الوراء
         with self.assertRaises(KeyUnavailable):
             self.node_a.send("too late", before)

@@ -5,35 +5,33 @@
 
 هو التطبيق الذي يرسل ويستقبل عبر الإنترنت. لا يملك البذرة السرية أبدًا.
 
-عند كل تغيير (في موعد سري وغير منتظم) — "المصافحة":
+عند كل تغيير (في موعد سري وغير منتظم) — "المصافحة الهجينة":
   1. يستلم "مفتاح الخزنة" للفترة من النظام 1 (في اتجاه واحد).
-  2. يولّد سرًا عشوائيًا (X25519) ويرسل نصفه العام داخل حزمة مشفرة بمفاتيح
-     مشتقة من مفتاح الخزنة (فلا يستطيع أحد انتحالها).
-  3. عند وصول نصف الطرف الآخر:
-        مفتاح الفترة = مزج(مفتاح الخزنة + سرّ Diffie-Hellman)
-     ويُتلف مفتاح الخزنة والسرّ الخاص فورًا.
+  2. يولّد سرًا عشوائيًا (X25519)، والطرف B يولّد أيضًا "قفلًا" مقاومًا
+     للحاسوب الكمّي (ML-KEM-1024) ويرسله مفتوحًا.
+  3. الطرف A يضع سرًا عشوائيًا في "صندوق" يقفله بقفل B ويرسله.
+  4. مفتاح الفترة = مزج (مفتاح الخزنة + سرّ X25519 + سرّ ML-KEM):
+     ثلاثة أقفال، يجب كسرها كلها. ثم يُتلف مفتاح الخزنة والأسرار الخاصة.
 
-داخل الفترة — "السقّاطة المزدوجة" (Double Ratchet، كما في تطبيق Signal):
-  - كل حزمة تحمل "نصفًا عامًا" حاليًا للمرسل.
-  - كلما وصل نصف جديد من الطرف الآخر، يُمزج بسرّ عشوائي جديد يولّده
-    المستقبل: عشوائية حقيقية جديدة مع كل تبادل للكلام (السقّاطة الأولى).
-  - بين تبادلين، لكل رسالة مفتاحها المحسوب من سلسلة، ويُتلف لحظة إرسالها
-    أو قراءتها (السقّاطة الثانية).
-  النتيجة: من يسرق الجهاز لا يقرأ أي رسالة سابقة، ويفقد القدرة على قراءة
-  الرسائل الجديدة بعد تبادل واحد تقريبًا.
-  المرجع: مواصفات Double Ratchet المنشورة (Perrin و Marlinspike، 2016).
+داخل الفترة — "السقّاطة المزدوجة الهجينة" (Double Ratchet كما في Signal،
+مع ML-KEM في كل خطوة كما في Apple PQ3 و Signal SPQR):
+  - كل حزمة تحمل نصف المرسل الحالي (X25519)، وقفله الحالي (ML-KEM)،
+    وصندوقًا مقفلًا بآخر قفل وصله من الطرف الآخر.
+  - كلما وصل نصف جديد: سرّ X25519 جديد + سرّ ML-KEM جديد يُمزجان في الجذر.
+  - بين الخطوات: مفتاح لكل رسالة يُتلف لحظة إرسالها أو قراءتها.
+  النتيجة: الهاتف المسروق يفقد قيمته بعد تبادل أو تبادلين، حتى لو امتلك
+  السارق حاسوبًا كمّيًا يكسر X25519، لأن قفل ML-KEM الجديد وُلد بعد السرقة.
 
 طبقتا تشفير بخوارزميتين مختلفتين:
      الحمولة ──► AES-256-GCM ──► ChaCha20-Poly1305 ──► الإنترنت
 
 إخفاء الآثار:
-  كل حزمة طولها ثابت (1024 بايت) ومشفرة بالكامل، بما فيها رأسها.
-  الحزمة الوهمية (للحافلة، انظر bus.py) لا تختلف عن الحقيقية، وعلامة
-  "وهمية" نفسها مخفية داخل الجزء المشفر بمفتاح الرسالة الذي يُتلف بعد
-  القراءة: حتى من يسرق الجهاز لاحقًا لا يميّز الوهمية من الحقيقية.
+  كل حزمة طولها ثابت (6144 بايت) ومشفرة بالكامل، بما فيها رأسها.
+  الحزمة الوهمية (bus.py) لا تختلف عن الحقيقية، وعلامة "وهمية" مخفية داخل
+  الجزء المشفر بمفتاح الرسالة الذي يُتلف بعد القراءة.
 
 شكل الحزمة:
-  [رقم عشوائي 12][الرأس المشفر 63][الجسم المشفر بطبقتين 949]
+  [رقم عشوائي 12][الرأس المشفر 3199: الأنصاف والقفل والصندوق][الجسم بطبقتين 2933]
 """
 from __future__ import annotations
 
@@ -41,6 +39,7 @@ import argparse
 import base64
 import binascii
 import copy
+import hashlib
 import hmac
 import struct
 import sys
@@ -49,6 +48,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.asymmetric.mlkem import (
+    MLKEM1024PrivateKey,
+    MLKEM1024PublicKey,
+)
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
@@ -75,17 +78,23 @@ from common import (
 
 KEY_BYTES = 32
 DH_BYTES = 32
+KEM_SEED_BYTES = 64          # مفتاح ML-KEM الخاص يُبنى من 64 بايت عشوائية (مفحوصة)
+KEM_PUBLIC_BYTES = 1568      # القفل المفتوح (ML-KEM-1024)
+KEM_CT_BYTES = 1568          # الصندوق المقفل
+NO_KEM_CT = bytes(KEM_CT_BYTES)
+NO_KEM_PUBLIC = bytes(KEM_PUBLIC_BYTES)
 NONCE_BYTES = 12
 TAG_BYTES = 16
 
-PACKET_BYTES = 1024                                            # طول كل حزمة (ثابت)
-# الرأس: النوع، الإصدار، الفترة، الدور، النصف العام الحالي، طول السلسلة السابقة، رقم الرسالة
-HEADER = struct.Struct(">cBIc32sII")
+PACKET_BYTES = 6144                                            # طول كل حزمة (ثابت)
+# الرأس: النوع، الإصدار، الفترة، الدور، النصف العام، طول السلسلة السابقة، رقم الرسالة،
+#        الصندوق المقفل (ML-KEM)، القفل المفتوح الحالي (ML-KEM)
+HEADER = struct.Struct(f">cBIc{DH_BYTES}sII{KEM_CT_BYTES}s{KEM_PUBLIC_BYTES}s")
 SEALED_HEADER_BYTES = HEADER.size + TAG_BYTES
 BODY_OFFSET = NONCE_BYTES + SEALED_HEADER_BYTES
 BODY_PLAIN_BYTES = PACKET_BYTES - BODY_OFFSET - 2 * TAG_BYTES  # طبقتان = ختمان
 LENGTH = struct.Struct(">H")
-MAX_TEXT_BYTES = BODY_PLAIN_BYTES - 1 - LENGTH.size            # 914 بايت لرسالة واحدة
+MAX_TEXT_BYTES = BODY_PLAIN_BYTES - 1 - LENGTH.size            # 2898 بايت لرسالة واحدة
 
 # الرسائل المتأخرة: تُقبل رسالة من فترة انتهت إذا وصلت خلال هذه المدة.
 GRACE_PERIOD = timedelta(hours=12)
@@ -103,7 +112,7 @@ class KeyUnavailable(NodeError):
 
 
 class HandshakePending(KeyUnavailable):
-    """مفتاح الخزنة موجود، لكن مصافحة الطرف الآخر لم تصل بعد."""
+    """مفتاح الخزنة موجود، لكن المصافحة لم تكتمل بعد."""
 
 
 class MessageRejected(NodeError):
@@ -132,17 +141,38 @@ def layer_keys(key: bytes) -> tuple[bytes, bytes]:
     return one_way(key, b"layer:aes"), one_way(key, b"layer:chacha")
 
 
-def kdf_root(root_key: bytes, dh_output: bytes) -> tuple[bytes, bytes]:
-    """خطوة السقّاطة الأولى: (مفتاح جذر جديد، بداية سلسلة جديدة)."""
+def kdf_root(root_key: bytes, dh_output: bytes, kem_output: bytes) -> tuple[bytes, bytes]:
+    """خطوة السقّاطة: (مفتاح جذر جديد، بداية سلسلة جديدة) من سرّ X25519 + سرّ ML-KEM."""
     out = HKDF(algorithm=SHA256(), length=2 * KEY_BYTES, salt=root_key,
-               info=b"ratchet:root").derive(dh_output)
+               info=b"ratchet:root:hybrid").derive(dh_output + kem_output)
     return out[:KEY_BYTES], out[KEY_BYTES:]
 
 
 def new_key_pair() -> tuple[bytes, bytes]:
-    """سرّ عشوائي جديد (مفحوص) ونصفه العام."""
+    """سرّ X25519 عشوائي جديد (مفحوص) ونصفه العام."""
     private = X25519PrivateKey.from_private_bytes(secure_random(DH_BYTES))
     return private.private_bytes_raw(), private.public_key().public_bytes_raw()
+
+
+def new_kem_pair() -> tuple[bytes, bytes]:
+    """قفل ML-KEM جديد: (البذرة الخاصة 64 بايت مفحوصة، القفل المفتوح)."""
+    seed = secure_random(KEM_SEED_BYTES)
+    return seed, MLKEM1024PrivateKey.from_seed_bytes(seed).public_key().public_bytes_raw()
+
+
+def kem_lock(public: bytes) -> tuple[bytes, bytes]:
+    """يضع سرًا عشوائيًا في صندوق مقفل بالقفل public: (السرّ، الصندوق)."""
+    if hmac.compare_digest(public, NO_KEM_PUBLIC):
+        raise MessageRejected("قفل ML-KEM مفقود — رُفض")
+    try:
+        return MLKEM1024PublicKey.from_public_bytes(public).encapsulate()
+    except ValueError:
+        raise MessageRejected("قفل ML-KEM غير صالح — رُفض") from None
+
+
+def kem_unlock(private_seed: bytes, box: bytes) -> bytes:
+    """يفتح الصندوق بالمفتاح الخاص. (صندوق معدّل يعطي سرًا خاطئًا، فتُرفض الحزمة لاحقًا.)"""
+    return MLKEM1024PrivateKey.from_seed_bytes(private_seed).decapsulate(box)
 
 
 def _dh(private: bytes, public: bytes) -> bytes:
@@ -166,19 +196,23 @@ class EpochSecrets:
     fingerprint: str
 
 
-def derive_epoch(vault_key: bytes, epoch: int, shared: bytes,
-                 pub_a: bytes, pub_b: bytes) -> EpochSecrets:
+def derive_epoch(vault_key: bytes, epoch: int, dh_shared: bytes, kem_shared: bytes,
+                 pub_a: bytes, pub_b: bytes, kem_public_b: bytes, kem_box: bytes) -> EpochSecrets:
     """
-    مفتاح الفترة = مزج (مفتاح الخزنة + سرّ Diffie-Hellman + النصفين العامين).
-    من يملك مفتاح الخزنة والنصفين العامين (وهما معلنان) لا يزال ينقصه السرّ
-    المشترك shared، ولا يُحسب إلا بمفتاح خاص لم يغادر جهاز صاحبه.
+    مفتاح الفترة = مزج ثلاثة أقفال مستقلة:
+      - مفتاح الخزنة (لم يمر عبر الإنترنت أبدًا)،
+      - سرّ X25519 (يُكسر بحاسوب كمّي كبير)،
+      - سرّ ML-KEM-1024 (لا يُعرف أي حاسوب، كمّي أو عادي، يكسره).
+    مع ربط كل ما تبادله الطرفان (الأنصاف والقفل والصندوق).
     مفتاح الفترة نفسه لا يُحفظ: نشتق منه ما نحتاجه ثم يُنسى.
     """
+    transcript = (struct.pack(">I", epoch) + pub_a + pub_b
+                  + hashlib.sha256(kem_public_b).digest() + hashlib.sha256(kem_box).digest())
     epoch_key = HKDF(
         algorithm=SHA256(), length=KEY_BYTES,
         salt=one_way(vault_key, b"epoch-mix"),
-        info=b"epoch-key|" + struct.pack(">I", epoch) + pub_a + pub_b,
-    ).derive(shared)
+        info=b"epoch-key:hybrid|" + transcript,
+    ).derive(dh_shared + kem_shared)
     return EpochSecrets(
         header_key=one_way(epoch_key, b"header"),
         root_key=one_way(epoch_key, b"root"),
@@ -266,20 +300,27 @@ def _open_body(body_key: bytes, raw: bytes, header: bytes) -> bytes:
         raise MessageRejected("فشل التحقق: الحزمة مُعدّلة أو مزوّرة — رُفضت.") from None
 
 
-def read_handshake(vault_key: bytes, packet: str) -> tuple[int, str, bytes]:
-    """
-    يفتح مصافحة بمفتاح الخزنة: (رقم الفترة، الدور، النصف العام).
-    النصف العام ليس سرًا؛ وجوده داخل حزمة مشفرة هدفه فقط إخفاء الآثار.
-    """
+@dataclass(frozen=True)
+class HandshakeView:
+    """ما تحمله مصافحة: كله معلن أو مقفل (ليس سرًا بحد ذاته)."""
+    epoch: int
+    role: str
+    half: bytes          # نصف X25519
+    kem_box: bytes       # صندوق ML-KEM (من الطرف A)، أو أصفار
+    kem_public: bytes    # قفل ML-KEM (من الطرف B)، أو أصفار
+
+
+def read_handshake(vault_key: bytes, packet: str) -> HandshakeView:
+    """يفتح مصافحة بمفتاح الخزنة (للتجارب: هكذا يراها من يملك الخزنة)."""
     raw = decode_packet(packet)
     header_key, _ = _handshake_keys(one_way(vault_key, b"handshake"))
     header = _open_header(header_key, raw)
     if header is None:
         raise MessageRejected("ليست مصافحة صادرة بمفتاح الخزنة هذا")
-    kind, _, epoch, role, public, _, _ = HEADER.unpack(header)
+    kind, _, epoch, role, half, _, _, box, public = HEADER.unpack(header)
     if kind != b"H":
         raise MessageRejected("ليست مصافحة")
-    return epoch, role.decode("ascii", "replace"), public
+    return HandshakeView(epoch, role.decode("ascii", "replace"), half, box, public)
 
 
 # ---------------------------------------------------------------------- #
@@ -293,22 +334,37 @@ def _unhex(value: str | None) -> bytes | None:
     return None if value is None else bytes.fromhex(value)
 
 
+_BYTES_FIELDS = (
+    "hs_key", "hs_public", "hs_private", "vault_key", "hs_kem_private", "hs_kem_public",
+    "hs_kem_box", "peer_hs_public", "peer_hs_kem_public", "header_key",
+    "dhs_private", "dhs_public", "dhr", "kem_s_private", "kem_s_public", "kem_box_out",
+    "rk", "cks", "ckr",
+)
+
+
 @dataclass
 class EpochState:
     valid_from: datetime
     valid_until: datetime
     hs_key: bytes                       # مفتاح المصافحات (مشتق باتجاه واحد من مفتاح الخزنة)
-    hs_public: bytes                    # نصف مصافحتي
+    hs_public: bytes                    # نصف مصافحتي (X25519)
     hs_private: bytes | None = None     # يُتلف بعد اكتمال المصافحة
     vault_key: bytes | None = None      # يُتلف بعد اكتمال المصافحة
+    hs_kem_private: bytes | None = None  # قفل مصافحتي الخاص (الطرف B)؛ يصبح قفله الأول في السقّاطة
+    hs_kem_public: bytes | None = None   # قفل مصافحتي المفتوح (الطرف B)
+    hs_kem_box: bytes | None = None      # صندوق المصافحة (يرسله A ويستلمه B)
     peer_hs_public: bytes | None = None
+    peer_hs_kem_public: bytes | None = None
     key_fp: str | None = None           # بصمة مفتاح الفترة (للمقارنة بالهاتف)
     header_key: bytes | None = None     # مفتاح إخفاء رؤوس الحزم
     peer_confirmed: bool = False        # هل تأكدنا أن الطرف الآخر أكمل المصافحة؟
-    # حالة السقّاطة المزدوجة (بأسماء المواصفات: DHs, DHr, RK, CKs, CKr, Ns, Nr, PN)
+    # السقّاطة المزدوجة الهجينة (بأسماء المواصفات: DHs, DHr, RK, CKs, CKr, Ns, Nr, PN)
     dhs_private: bytes | None = None
     dhs_public: bytes | None = None
     dhr: bytes | None = None
+    kem_s_private: bytes | None = None  # قفلي الحالي (الخاص): يفتح صناديق الطرف الآخر
+    kem_s_public: bytes | None = None   # قفلي الحالي (المفتوح): يُرسل في كل حزمة
+    kem_box_out: bytes | None = None    # صندوق سلسلة إرسالي الحالية (يُرسل في كل حزمة منها)
     rk: bytes | None = None
     cks: bytes | None = None
     ckr: bytes | None = None
@@ -323,29 +379,17 @@ class EpochState:
         return self.header_key is not None
 
     def to_dict(self) -> dict:
-        return {
+        data = {name: _hex(getattr(self, name)) for name in _BYTES_FIELDS}
+        data.update({
             "valid_from": self.valid_from.isoformat(),
             "valid_until": self.valid_until.isoformat(),
-            "hs_key": _hex(self.hs_key),
-            "hs_public": _hex(self.hs_public),
-            "hs_private": _hex(self.hs_private),
-            "vault_key": _hex(self.vault_key),
-            "peer_hs_public": _hex(self.peer_hs_public),
             "key_fp": self.key_fp,
-            "header_key": _hex(self.header_key),
             "peer_confirmed": self.peer_confirmed,
-            "dhs_private": _hex(self.dhs_private),
-            "dhs_public": _hex(self.dhs_public),
-            "dhr": _hex(self.dhr),
-            "rk": _hex(self.rk),
-            "cks": _hex(self.cks),
-            "ckr": _hex(self.ckr),
-            "ns": self.ns,
-            "nr": self.nr,
-            "pn": self.pn,
+            "ns": self.ns, "nr": self.nr, "pn": self.pn,
             "skipped": {f"{dh.hex()}:{n}": key.hex() for (dh, n), key in self.skipped.items()},
             "old_halves": [half.hex() for half in self.old_halves],
-        }
+        })
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "EpochState":
@@ -356,25 +400,12 @@ class EpochState:
         return cls(
             valid_from=parse_time(data["valid_from"]),
             valid_until=parse_time(data["valid_until"]),
-            hs_key=bytes.fromhex(data["hs_key"]),
-            hs_public=bytes.fromhex(data["hs_public"]),
-            hs_private=_unhex(data.get("hs_private")),
-            vault_key=_unhex(data.get("vault_key")),
-            peer_hs_public=_unhex(data.get("peer_hs_public")),
             key_fp=data.get("key_fp"),
-            header_key=_unhex(data.get("header_key")),
             peer_confirmed=bool(data.get("peer_confirmed", False)),
-            dhs_private=_unhex(data.get("dhs_private")),
-            dhs_public=_unhex(data.get("dhs_public")),
-            dhr=_unhex(data.get("dhr")),
-            rk=_unhex(data.get("rk")),
-            cks=_unhex(data.get("cks")),
-            ckr=_unhex(data.get("ckr")),
-            ns=int(data.get("ns", 0)),
-            nr=int(data.get("nr", 0)),
-            pn=int(data.get("pn", 0)),
+            ns=int(data.get("ns", 0)), nr=int(data.get("nr", 0)), pn=int(data.get("pn", 0)),
             skipped=skipped,
             old_halves=[bytes.fromhex(h) for h in data.get("old_halves", [])],
+            **{name: _unhex(data.get(name)) for name in _BYTES_FIELDS},
         )
 
 
@@ -385,6 +416,7 @@ class Received:
     epoch: int
     texts: tuple[str, ...] = ()
     duplicate: bool = False
+    waiting: bool = False           # مصافحة وصلت قبل أن يحمل الطرف الآخر الصندوق
 
     @property
     def text(self) -> str | None:
@@ -423,10 +455,6 @@ class OnlineNode:
             "epochs": {str(e): s.to_dict() for e, s in sorted(self.epochs.items())},
         })
 
-    @property
-    def peer_role(self) -> str:
-        return ROLES[1] if self.role == ROLES[0] else ROLES[0]
-
     # ------------------------------------------------------------------ #
     # أدوات داخلية
     # ------------------------------------------------------------------ #
@@ -456,8 +484,8 @@ class OnlineNode:
             "لا يوجد مفتاح للوقت الحالي: حان موعد تغيير جديد (أو لم يُستورد أي مفتاح بعد). "
             "استورد مفتاح الخزنة أولًا — النظام يرفض الاستمرار بمفتاح قديم.")
 
-    def _parse_header(self, header: bytes, kind: bytes, epoch: int) -> tuple[bytes, int, int]:
-        h_kind, version, h_epoch, role_raw, half, pn, n = HEADER.unpack(header)
+    def _parse_header(self, header: bytes, kind: bytes, epoch: int):
+        h_kind, version, h_epoch, role_raw, half, pn, n, box, public = HEADER.unpack(header)
         if h_kind != kind or version != FORMAT_VERSION or h_epoch != epoch:
             raise MessageRejected("رأس الحزمة غير متّسق — رُفضت")
         role = role_raw.decode("ascii", "replace")
@@ -465,10 +493,10 @@ class OnlineNode:
             raise MessageRejected("دور غير معروف في الحزمة — رُفضت")
         if role == self.role:
             raise MessageRejected("هذه حزمة صادرة منك أنت أُعيدت إليك — رُفضت")
-        return half, pn, n
+        return half, pn, n, box, public
 
     # ------------------------------------------------------------------ #
-    # 1) استلام مفتاح الخزنة + توليد سرّ المصافحة
+    # 1) استلام مفتاح الخزنة + توليد أسرار المصافحة
     # ------------------------------------------------------------------ #
     def import_bundle(self, bundle: dict, now: datetime | None = None) -> int:
         if bundle.get("format") != "key-bundle" or bundle.get("version") != FORMAT_VERSION:
@@ -498,10 +526,13 @@ class OnlineNode:
         state = self.epochs.get(epoch)
         if state is None:
             private, public = new_key_pair()
-            self.epochs[epoch] = EpochState(
+            state = EpochState(
                 valid_from=valid_from, valid_until=valid_until,
                 hs_key=one_way(vault_key, b"handshake"), hs_public=public,
                 hs_private=private, vault_key=vault_key)
+            if role == "B":
+                state.hs_kem_private, state.hs_kem_public = new_kem_pair()
+            self.epochs[epoch] = state
         elif not state.ready and not hmac.compare_digest(state.vault_key, vault_key):
             raise NodeError("مفتاح خزنة مختلف لفترة استُورد مفتاحها سابقًا — رُفض")
         self.save()
@@ -522,8 +553,10 @@ class OnlineNode:
     # ------------------------------------------------------------------ #
     def _handshake_packet(self, epoch: int, state: EpochState) -> str:
         header_key, body_key = _handshake_keys(state.hs_key)
-        header = HEADER.pack(b"H", FORMAT_VERSION, epoch, self.role.encode("ascii"),
-                             state.hs_public, 0, 0)
+        header = HEADER.pack(
+            b"H", FORMAT_VERSION, epoch, self.role.encode("ascii"), state.hs_public, 0, 0,
+            state.hs_kem_box if (self.role == "A" and state.hs_kem_box) else NO_KEM_CT,
+            state.hs_kem_public if self.role == "B" else NO_KEM_PUBLIC)
         # علامة "أنا جاهز": تخبر الطرف الآخر أن مصافحته وصلتني
         return _seal(header_key, body_key, header, bytes([1 if state.ready else 0]))
 
@@ -544,14 +577,14 @@ class OnlineNode:
         epoch, state = self.current_state(now)
         if not state.ready:
             raise HandshakePending(
-                "مفتاح هذه الفترة غير مكتمل: بانتظار مصافحة الطرف الآخر. "
-                "تأكد أيضًا أنه استلم مصافحتك.")
+                "مفتاح هذه الفترة غير مكتمل: بانتظار اكتمال المصافحة مع الطرف الآخر.")
         if state.cks is None:   # مثلًا: رجعت ساعة الجهاز إلى الوراء بعد انتهاء الفترة
             raise KeyUnavailable("هذه الفترة انتهت وأُتلفت سلسلة إرسالها؛ لا إرسال بها بعد الآن.")
         payload = encode_passengers(texts)
         message_key = chain_message_key(state.cks)
         header = HEADER.pack(b"M", FORMAT_VERSION, epoch, self.role.encode("ascii"),
-                             state.dhs_public, state.pn, state.ns)
+                             state.dhs_public, state.pn, state.ns,
+                             state.kem_box_out, state.kem_s_public)
         state.cks = chain_next(state.cks)    # المفتاح المستعمل لم يعد قابلًا للحساب
         state.ns += 1
         self.save()   # نحفظ التقدّم قبل الإرسال: لا يُستعمل أي مفتاح مرتين أبدًا
@@ -588,31 +621,54 @@ class OnlineNode:
 
     def _receive_handshake(self, epoch: int, state: EpochState,
                            header: bytes, raw: bytes) -> Received:
-        public, _, _ = self._parse_header(header, b"H", epoch)
+        half, _, _, box, kem_public = self._parse_header(header, b"H", epoch)
         peer_ready = _open_body(_handshake_keys(state.hs_key)[1], raw, header)[0] == 1
+        has_box = not hmac.compare_digest(box, NO_KEM_CT)
+
         if state.ready:
-            if not hmac.compare_digest(public, state.peer_hs_public):
+            consistent = hmac.compare_digest(half, state.peer_hs_public)
+            if self.role == "A":
+                consistent = consistent and hmac.compare_digest(kem_public, state.peer_hs_kem_public)
+            elif has_box:
+                consistent = consistent and hmac.compare_digest(box, state.hs_kem_box)
+            if not consistent:
                 raise MessageRejected("مصافحة مختلفة لفترة اكتملت مصافحتها — رُفضت")
             if peer_ready and not state.peer_confirmed:
                 state.peer_confirmed = True
                 self.save()
             return Received("handshake", epoch, duplicate=True)
 
-        shared = _dh(state.hs_private, public)
-        pub_a, pub_b = ((state.hs_public, public) if self.role == "A"
-                        else (public, state.hs_public))
-        secrets = derive_epoch(state.vault_key, epoch, shared, pub_a, pub_b)
-        state.header_key, state.key_fp = secrets.header_key, secrets.fingerprint
-        state.peer_hs_public = public
+        dh_shared = _dh(state.hs_private, half)
         if self.role == "A":
-            # مثل "Alice" في المواصفات: سرّ جديد فورًا، وسلسلة إرسال منه
+            # B أرسل قفله المفتوح: نضع فيه سرًا ونرسل الصندوق في مصافحتنا التالية
+            kem_shared, state.hs_kem_box = kem_lock(kem_public)
+            state.peer_hs_kem_public = kem_public
+            secrets = derive_epoch(state.vault_key, epoch, dh_shared, kem_shared,
+                                   state.hs_public, half, kem_public, state.hs_kem_box)
+        else:
+            if not has_box:
+                # مصافحة A وصلت قبل أن يصله قفلنا: ننتظر مصافحته التالية (تحمل الصندوق)
+                return Received("handshake", epoch, waiting=True)
+            kem_shared = kem_unlock(state.hs_kem_private, box)
+            state.hs_kem_box = box
+            secrets = derive_epoch(state.vault_key, epoch, dh_shared, kem_shared,
+                                   half, state.hs_public, state.hs_kem_public, box)
+
+        state.header_key, state.key_fp = secrets.header_key, secrets.fingerprint
+        state.peer_hs_public = half
+        if self.role == "A":
+            # مثل "Alice" في المواصفات: أسرار جديدة فورًا، وسلسلة إرسال منها
             state.dhs_private, state.dhs_public = new_key_pair()
-            state.dhr = public
-            state.rk, state.cks = kdf_root(secrets.root_key, _dh(state.dhs_private, public))
+            state.kem_s_private, state.kem_s_public = new_kem_pair()
+            state.dhr = half
+            kem_out, state.kem_box_out = kem_lock(kem_public)
+            state.rk, state.cks = kdf_root(secrets.root_key, _dh(state.dhs_private, half), kem_out)
             state.ckr = secrets.initial_chain_b
         else:
-            # مثل "Bob": سرّ المصافحة نفسه هو نصفه الأول، مع سلسلة أولى ليرسل متى شاء
+            # مثل "Bob": أسرار المصافحة نفسها هي أسراره الأولى، مع سلسلة أولى ليرسل متى شاء
             state.dhs_private, state.dhs_public = state.hs_private, state.hs_public
+            state.kem_s_private, state.kem_s_public = state.hs_kem_private, state.hs_kem_public
+            state.kem_box_out = NO_KEM_CT
             state.dhr = None
             state.rk = secrets.root_key
             state.cks = secrets.initial_chain_b
@@ -620,29 +676,28 @@ class OnlineNode:
         state.ns = state.nr = state.pn = 0
         state.peer_confirmed = peer_ready
         state.hs_private = None      # نُتلف كل ما لم نعد نحتاجه.
+        state.hs_kem_private = None
         state.vault_key = None
         self.save()
         return Received("handshake", epoch)
 
     def _receive_message(self, epoch: int, state: EpochState, header: bytes,
                          raw: bytes, now: datetime) -> Received:
-        half, pn, n = self._parse_header(header, b"M", epoch)
+        half, pn, n, box, kem_public = self._parse_header(header, b"M", epoch)
         work = copy.deepcopy(state)   # نعمل على نسخة، ولا نعتمدها إلا بعد نجاح التحقق
         if (half, n) in work.skipped:
             message_key = work.skipped.pop((half, n))
         else:
             is_current = work.dhr is not None and hmac.compare_digest(half, work.dhr)
-            if not is_current and any(hmac.compare_digest(half, h) for h in work.old_halves):
-                raise ReplayRejected(
-                    "هذه الرسالة قُرئت من قبل، أو أنها إعادة إرسال لرسالة مسجّلة: "
-                    "مفتاحها أُتلف لحظة قراءتها — رُفضت.")
-            if is_current and n < work.nr:
+            replay = (not is_current and any(hmac.compare_digest(half, h) for h in work.old_halves)
+                      ) or (is_current and n < work.nr)
+            if replay:
                 raise ReplayRejected(
                     "هذه الرسالة قُرئت من قبل، أو أنها إعادة إرسال لرسالة مسجّلة: "
                     "مفتاحها أُتلف لحظة قراءتها — رُفضت.")
             if not is_current:
-                self._skip(work, pn)            # نحفظ مفاتيح ما لم يصل من السلسلة السابقة
-                self._dh_ratchet(work, half)    # عشوائية جديدة
+                self._skip(work, pn)                       # مفاتيح ما لم يصل من السلسلة السابقة
+                self._ratchet(work, half, box, kem_public)  # عشوائية جديدة (X25519 + ML-KEM)
             self._skip(work, n)
             message_key = chain_message_key(work.ckr)
             work.ckr = chain_next(work.ckr)
@@ -670,15 +725,25 @@ class OnlineNode:
             del work.skipped[next(iter(work.skipped))]
 
     @staticmethod
-    def _dh_ratchet(work: EpochState, half: bytes) -> None:
-        """خطوة السقّاطة: نصف الطرف الآخر الجديد + سرّ عشوائي جديد من عندنا."""
+    def _ratchet(work: EpochState, half: bytes, box: bytes, kem_public: bytes) -> None:
+        """
+        خطوة السقّاطة الهجينة:
+          - نفتح صندوق الطرف الآخر بقفلنا الحالي، ونمزجه مع سرّ X25519 → سلسلة استقبال جديدة؛
+          - نولّد نصفًا جديدًا وقفلًا جديدًا، ونضع سرًا في صندوق مقفل بقفله الجديد،
+            ونمزجهما → سلسلة إرسال جديدة.
+        """
+        if hmac.compare_digest(box, NO_KEM_CT) or hmac.compare_digest(kem_public, NO_KEM_PUBLIC):
+            raise MessageRejected("خطوة سقّاطة بلا حماية ML-KEM — رُفضت")
         if work.dhr is not None:
             work.old_halves = (work.old_halves + [work.dhr])[-MAX_OLD_HALVES:]
         work.pn, work.ns, work.nr = work.ns, 0, 0
         work.dhr = half
-        work.rk, work.ckr = kdf_root(work.rk, _dh(work.dhs_private, half))
+        kem_in = kem_unlock(work.kem_s_private, box)
+        work.rk, work.ckr = kdf_root(work.rk, _dh(work.dhs_private, half), kem_in)
         work.dhs_private, work.dhs_public = new_key_pair()
-        work.rk, work.cks = kdf_root(work.rk, _dh(work.dhs_private, half))
+        work.kem_s_private, work.kem_s_public = new_kem_pair()
+        kem_out, work.kem_box_out = kem_lock(kem_public)
+        work.rk, work.cks = kdf_root(work.rk, _dh(work.dhs_private, half), kem_out)
 
     # ------------------------------------------------------------------ #
     # معلومات
@@ -713,7 +778,7 @@ def _cmd_import(args: argparse.Namespace) -> None:
     node = OnlineNode.open(args.node)
     epochs = node.import_from_folder(args.source)
     print(f"تم استيراد مفتاح الخزنة للفترة {', '.join(map(str, epochs))} ومسحه من مجلد النقل.")
-    print("وتم توليد سرّ عشوائي جديد. أرسل هذه المصافحة إلى الطرف الآخر")
+    print("وتم توليد أسرار عشوائية جديدة. أرسل هذه المصافحة إلى الطرف الآخر")
     print("(شكلها مثل أي رسالة مشفرة، ونشرها آمن):")
     print()
     print(node.handshake_for(epochs[-1]))
@@ -738,11 +803,18 @@ def _cmd_receive(args: argparse.Namespace) -> None:
         print(result.text)
     elif result.kind == "dummy":
         print("(حزمة وهمية: لا محتوى. لكنها جدّدت العشوائية.)")
+    elif result.waiting:
+        print("وصلت مصافحة الطرف الآخر، لكنها لا تحمل الصندوق المقفل بعد.")
+        print("أرسل له مصافحتك (تحمل قفلك)، ثم استقبل مصافحته التالية.")
     elif result.duplicate:
         print("مصافحة مكررة وصلت من قبل؛ لا شيء جديد.")
     else:
         print(f"اكتملت المصافحة. بصمة مفتاح الفترة: {node.epochs[result.epoch].key_fp}")
         print("(يمكنكما مقارنتها بالهاتف لكشف أي انتحال)")
+        if node.role == "A":
+            print("أرسل هذه المصافحة الجديدة إلى الطرف الآخر (تحمل الصندوق المقفل):")
+            print()
+            print(node.handshake_for(result.epoch))
 
 
 def _cmd_status(args: argparse.Namespace) -> None:
@@ -755,10 +827,10 @@ def _cmd_status(args: argparse.Namespace) -> None:
     for epoch, state in sorted(node.epochs.items()):
         current = " ← الحالية" if state.valid_from <= now < state.valid_until else ""
         if state.ready:
-            status = (f"جاهزة، بصمة المفتاح {state.key_fp}، نصفي الحالي "
-                      f"{fingerprint(state.dhs_public, 'half')}")
+            status = (f"جاهزة (هجينة: X25519 + ML-KEM-1024)، بصمة المفتاح {state.key_fp}، "
+                      f"نصفي الحالي {fingerprint(state.dhs_public, 'half')}")
         else:
-            status = "بانتظار مصافحة الطرف الآخر"
+            status = "بانتظار اكتمال المصافحة"
         print(f"  الفترة {epoch} [{stamp(state.valid_from)} → {stamp(state.valid_until)}]: "
               f"{status}{current}")
 

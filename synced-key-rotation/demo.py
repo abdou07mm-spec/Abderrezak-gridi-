@@ -12,16 +12,16 @@
 """
 from __future__ import annotations
 
+import copy
 import secrets
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 
-from common import FORMAT_VERSION, secure_random, stamp, use_utf8_console
+from common import FORMAT_VERSION, fingerprint, secure_random, stamp, use_utf8_console
 from offline_vault import OfflineVault, VaultError, dice_bits, export_bundle, key_fingerprint
 from online_node import (
     BODY_OFFSET,
@@ -29,9 +29,13 @@ from online_node import (
     NONCE_BYTES,
     NodeError,
     OnlineNode,
+    _dh,
+    _open_header,
     chain_message_key,
     decode_packet,
     derive_epoch,
+    kdf_root,
+    kem_unlock,
     layer_keys,
     read_handshake,
 )
@@ -89,18 +93,22 @@ class Person:
             print(f"  [{stamp(now)}] {self.name} {label}: ✗ {error}")
 
 
-def handshake(a: Person, hs_a: str, b: Person, hs_b: str, now: datetime) -> None:
-    b.node.receive(hs_a, now)
-    a.node.receive(hs_b, now)
+def handshake(a: Person, b: Person, now: datetime) -> None:
+    """المصافحة الهجينة: سارة (B) ترسل قفل ML-KEM مفتوحًا، وأحمد (A) يرد بالصندوق المقفل."""
+    for _ in range(3):
+        b.node.receive(a.node.my_handshake(now), now)
+        a.node.receive(b.node.my_handshake(now), now)
+        if a.node.key_fingerprint(now) and b.node.key_fingerprint(now):
+            break
     fa, fb = a.node.key_fingerprint(now), b.node.key_fingerprint(now)
     print(f"      المصافحة اكتملت. مفتاح الفترة: عند {a.name} {fa} | عند {b.name} {fb} "
           f"→ {'متطابقان ✓' if fa == fb else 'مختلفان ✗'}")
 
 
-def change(a: Person, b: Person, now: datetime) -> tuple[str, str]:
-    hs_a, hs_b = a.rotate(now), b.rotate(now)
-    handshake(a, hs_a, b, hs_b, now)
-    return hs_a, hs_b
+def change(a: Person, b: Person, now: datetime) -> None:
+    a.rotate(now)
+    b.rotate(now)
+    handshake(a, b, now)
 
 
 def attack(node: OnlineNode, packet: str, label: str, now: datetime) -> bool:
@@ -158,7 +166,7 @@ def main() -> None:
         fake_node = OnlineNode.open(lair / "fake_node.json")
         fake_node.import_bundle(fake_vault.release_key(c1), c1)
         sara.receive(fake_node.my_handshake(c1), c1, "تستقبل الحزمة المزوّرة")
-        handshake(ahmed, hs_a, sara, hs_s, c1)
+        handshake(ahmed, sara, c1)
 
         m1 = ahmed.send("الاجتماع غدًا في المكان المعتاد", minutes(c1, 5))
         sara.receive(m1, minutes(c1, 6))
@@ -203,12 +211,28 @@ def main() -> None:
         print("        نصف وُلد على هاتف سارة بعد السرقة، فقد المخترق القدرة نهائيًا:")
         print("        بعد تبادلين فقط، ودون انتظار التغيير السري التالي.")
 
+        print("  ولو كان مع المخترق حاسوب كمّي يكسر X25519؟ (سرقة جديدة لهاتف سارة)")
+        stolen_state = copy.deepcopy(sara.node.epochs[1])
+        now = minutes(theft, 30)
+        packet = ahmed.send("هل أنتِ بخير؟", now, quiet=True)
+        fields = HEADER.unpack(_open_header(stolen_state.header_key, decode_packet(packet)))
+        root_1, _ = kdf_root(stolen_state.rk, _dh(stolen_state.dhs_private, fields[4]),
+                             kem_unlock(stolen_state.kem_s_private, fields[7]))
+        sara.receive(packet, now, quiet=True)               # سارة: نصف جديد وقفل جديد، وصندوق لأحمد
+        real = sara.node.epochs[1]
+        quantum_dh = _dh(real.dhs_private, fields[4])        # محاكاة: الحاسوب الكمّي يكسر X25519
+        best = kdf_root(root_1, quantum_dh, secure_random(32))[0]
+        print("      يتقدّم خطوة بقفل سارة المسروق، ويكسر X25519 الجديد بالحاسوب الكمّي...")
+        print(f"      الجذر الذي يحسبه: {fingerprint(best, 'root')} ≠ الحقيقي {fingerprint(real.rk, 'root')}")
+        print("      ← ينقصه سرّ الصندوق الذي وضعته سارة بعد السرقة، مقفلًا بقفل ML-KEM لأحمد.")
+
         # ------------------------------------------------------------------
         title("تجربة خيالية: المخترق كسر خوارزمية ChaCha20 بالكامل")
         change(ahmed, sara, c2)
         epoch = max(ahmed.node.epochs)
         state = ahmed.node.epochs[epoch]
-        header = HEADER.pack(b"M", FORMAT_VERSION, epoch, b"A", state.dhs_public, state.pn, state.ns)
+        header = HEADER.pack(b"M", FORMAT_VERSION, epoch, b"A", state.dhs_public, state.pn,
+                             state.ns, state.kem_box_out, state.kem_s_public)
         k_aes, k_chacha = layer_keys(chain_message_key(state.cks))      # محاكاة فقط
         m6 = ahmed.send("كلمة السر للخزانة: 7391", minutes(c2, 20))
         sara.receive(m6, minutes(c2, 21))
@@ -229,20 +253,31 @@ def main() -> None:
         except VaultError:
             print("  المخترق يطلب من الخزنة المسروقة مفتاح الفترة 1: فشل ✗ (أُتلف نهائيًا)")
         print(f"  ويعرف الآن موعد التغيير القادم: {stamp(stolen_vault.next_change())}")
-        hs_a, hs_s = change(ahmed, sara, c3)
+        ahmed.rotate(c3)
+        sara.rotate(c3)
+        e3 = max(ahmed.node.epochs)
+        real_dh = _dh(ahmed.node.epochs[e3].hs_private, sara.node.epochs[e3].hs_public)  # للمحاكاة
+        handshake(ahmed, sara, c3)
         m7 = ahmed.send("تم نقل الوثائق", minutes(c3, 15))
         sara.receive(m7, minutes(c3, 16))
 
         vault_key = bytes.fromhex(stolen_vault.release_key(c3)["key"])
         print(f"      المخترق يحسب مفتاح خزنة الفترة الجديدة: {key_fingerprint(vault_key)} (صحيح!)")
-        epoch, _, pub_a = read_handshake(vault_key, hs_a)
-        _, _, pub_s = read_handshake(vault_key, hs_s)
-        print("      ويفتح المصافحتين اللتين سجّلهما، فيحصل على النصفين العامين الحقيقيين.")
-        guess = X25519PrivateKey.from_private_bytes(secure_random(32)).exchange(
-            X25519PublicKey.from_public_bytes(pub_s))
-        best = derive_epoch(vault_key, epoch, guess, pub_a, pub_s)
-        print(f"      أفضل مفتاح يستطيع حسابه: {best.fingerprint} ≠ الحقيقي {sara.node.key_fingerprint(c3)}")
-        print("      ← ينقصه السرّ العشوائي الخاص الذي وُلد على جهاز أحمد بعد السرقة ولم يغادره.")
+        view_a = read_handshake(vault_key, ahmed.node.my_handshake(c3))
+        view_s = read_handshake(vault_key, sara.node.my_handshake(c3))
+        print("      ويفتح المصافحتين اللتين سجّلهما: النصفين، وقفل ML-KEM، والصندوق المقفل.")
+
+        def attempt(dh: bytes, kem: bytes) -> str:
+            return derive_epoch(vault_key, e3, dh, kem, view_a.half, view_s.half,
+                                view_s.kem_public, view_a.kem_box).fingerprint
+
+        real_fp = sara.node.key_fingerprint(c3)
+        print(f"      أفضل مفتاح يحسبه بحاسوب عادي:          {attempt(secure_random(32), secure_random(32))}"
+              f" ≠ الحقيقي {real_fp}")
+        print(f"      ومع حاسوب كمّي يكسر X25519 (محاكاة): {attempt(real_dh, secure_random(32))}"
+              f" ≠ الحقيقي {real_fp}")
+        print("      ← ينقصه سرّ ML-KEM: الصندوق مقفل بقفل وُلد على هاتف سارة ولم يغادره،")
+        print("        ولا يُعرف أي حاسوب، كمّي أو عادي، يفتحه.")
         print("      ⚠ لكنه بالخزنة يستطيع انتحال شخصية أحمد إذا تحكّم في الشبكة نفسها؛")
         print("        لذلك بعد أي سرقة يُعاد الاقتران، ويمكن مقارنة بصمة المفتاح بالهاتف.")
 
@@ -261,6 +296,7 @@ def main() -> None:
             "عشوائية جديدة مع كل تبادل للكلام: الهاتف المسروق يفقد قيمته بعد تبادلين.",
             "مفتاح لكل رسالة يُتلف عند قراءتها: الرسائل المقروءة محمية حتى لو سُرق الهاتف.",
             "حتى سرقة الخزنة لا تكفي: ينقص السارق السرّ العشوائي الذي وُلد بعد السرقة.",
+            "ثلاثة أقفال لكل مفتاح (الخزنة + X25519 + ML-KEM): حتى الحاسوب الكمّي لا يكفي.",
             "إعادة إرسال رسالة مسجّلة تُرفض، والرسائل التي تصل بغير ترتيب تُقرأ عادي.",
             "طبقتان بخوارزميتين مختلفتين: كسر إحداهما لا يكفي.",
             "كل الحزم (حقيقية، وهمية، مصافحات) بطول ثابت ومشفّرة بالكامل.",
