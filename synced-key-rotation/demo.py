@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-محاكاة كاملة للنظام:
+محاكاة كاملة للنظام (الجزء الأول: الحماية والهجمات):
   - أحمد وسارة، لكل منهما نظام 1 (أوفلاين) ونظام 2 (أونلاين).
   - "المخترق" يسجّل كل ما يمر عبر الإنترنت، ويحاول التزوير وإعادة الإرسال،
     ثم يسرق الأجهزة، بل ويتخيّل أنه كسر إحدى خوارزميتي التشفير.
   - مواعيد التغيير سرية وعشوائية، والوقت محاكى (لا داعي للانتظار).
+
+الجزء الثاني (الحافلة والحزم الوهمية وما يراه المراقب): bus_demo.py
 
 التشغيل:  python demo.py
 """
@@ -24,8 +26,6 @@ from offline_vault import OfflineVault, VaultError, dice_bits, export_bundle, ke
 from online_node import (
     BODY_OFFSET,
     HEADER,
-    EpochState,
-    LENGTH,
     NONCE_BYTES,
     NodeError,
     OnlineNode,
@@ -36,8 +36,6 @@ from online_node import (
     read_handshake,
 )
 
-internet: list[str] = []   # كل ما يمر عبر الشبكة (المخترق يسجّله كله)
-
 
 def title(text: str) -> None:
     print()
@@ -46,12 +44,12 @@ def title(text: str) -> None:
     print("=" * 74)
 
 
-def short(packet: str) -> str:
-    return f"{packet[:28]}... ({len(packet)} حرفًا)"
-
-
 def clip(text: str) -> str:
     return text if len(text) <= 40 else text[:40] + "..."
+
+
+def short(packet: str) -> str:
+    return f"{packet[:28]}... ({len(packet)} حرفًا)"
 
 
 def minutes(moment: datetime, count: int) -> datetime:
@@ -70,24 +68,22 @@ class Person:
         bundle = self.vault.release_key(now)
         export_bundle(bundle, self.usb)
         self.node.import_from_folder(self.usb, now)
-        handshake = self.node.my_handshake(now)
-        internet.append(handshake)
         print(f"  [{stamp(now)}] {self.name}: مفتاح خزنة الفترة {bundle['epoch']} "
               f"(بصمته {key_fingerprint(bytes.fromhex(bundle['key']))}) + سرّ عشوائي جديد")
-        return handshake
+        return self.node.my_handshake(now)
 
-    def send(self, text: str, now: datetime) -> str:
+    def send(self, text: str, now: datetime, quiet: bool = False) -> str:
         packet = self.node.send(text, now)
-        internet.append(packet)
-        print(f"  [{stamp(now)}] {self.name} يرسل: «{clip(text)}» "
-              f"({len(text.encode('utf-8'))} بايت)")
-        print(f"      على الإنترنت: {short(packet)}")
+        if not quiet:
+            print(f"  [{stamp(now)}] {self.name} يرسل: «{clip(text)}» "
+                  f"({len(text.encode('utf-8'))} بايت)")
+            print(f"      على الإنترنت: {short(packet)}")
         return packet
 
-    def receive(self, packet: str, now: datetime, label: str = "") -> None:
+    def receive(self, packet: str, now: datetime, label: str = "", quiet: bool = False) -> None:
         try:
             result = self.node.receive(packet, now)
-            if result.kind == "message":
+            if result.kind == "message" and not quiet:
                 print(f"  [{stamp(now)}] {self.name} {label}تقرأ: «{clip(result.text)}»  ✓")
         except NodeError as error:
             print(f"  [{stamp(now)}] {self.name} {label}: ✗ {error}")
@@ -101,16 +97,20 @@ def handshake(a: Person, hs_a: str, b: Person, hs_b: str, now: datetime) -> None
           f"→ {'متطابقان ✓' if fa == fb else 'مختلفان ✗'}")
 
 
-def change(a: Person, b: Person, now: datetime) -> None:
-    handshake(a, a.rotate(now), b, b.rotate(now), now)
+def change(a: Person, b: Person, now: datetime) -> tuple[str, str]:
+    hs_a, hs_b = a.rotate(now), b.rotate(now)
+    handshake(a, hs_a, b, hs_b, now)
+    return hs_a, hs_b
 
 
-def attack(node: OnlineNode, packet: str, label: str, now: datetime) -> None:
+def attack(node: OnlineNode, packet: str, label: str, now: datetime) -> bool:
     try:
         result = node.receive(packet, now)
         print(f"      المخترق يقرأ {label}: «{clip(result.text)}»  ← نجح")
+        return True
     except NodeError:
         print(f"      المخترق يحاول قراءة {label}: فشل ✗")
+        return False
 
 
 def main() -> None:
@@ -139,21 +139,21 @@ def main() -> None:
 
         # ------------------------------------------------------------------
         title("مواعيد التغيير: سرية، غير منتظمة، ومتطابقة عند الطرفين")
-        changes = vault_a.upcoming_changes(5)
+        changes = vault_a.upcoming_changes(4)
         previous = t0
-        for i, (when, when_s) in enumerate(zip(changes, vault_s.upcoming_changes(5)), 1):
+        for i, (when, when_s) in enumerate(zip(changes, vault_s.upcoming_changes(4)), 1):
             gap = (when - previous).total_seconds() / 3600
             print(f"  التغيير {i}: {stamp(when)} (بعد {gap:.2f} ساعة)"
                   f"  {'✓ نفس الموعد عند سارة' if when == when_s else '✗'}")
             previous = when
         print("  ← لا أحد غيرهما يعرف هذه المواعيد، ولا يمكن توقّعها: كل مدة تُحسب من السلسلة السرية.")
-        c1, c2, c3, c4, _ = changes
+        c1, c2, c3, _ = changes
 
         # ------------------------------------------------------------------
         title("التغيير 1 — مصافحة، ومحاولة تسلل، وإخفاء الآثار")
         hs_a = ahmed.rotate(c1)
         hs_s = sara.rotate(c1)
-        print("  المخترق يرسل لسارة حزمة مزوّرة (بمفتاح خزنة مخمَّن) ليتسلل في المنتصف:")
+        print("  المخترق يرسل لسارة حزمة مزوّرة (بخزنة مزيفة) ليتسلل في المنتصف:")
         fake_vault, _ = OfflineVault.create_pair(lair / "fake_a.json", lair / "fake_b.json", now=t0)
         fake_node = OnlineNode.open(lair / "fake_node.json")
         fake_node.import_bundle(fake_vault.release_key(c1), c1)
@@ -164,13 +164,15 @@ def main() -> None:
         sara.receive(m1, minutes(c1, 6))
         long_text = ahmed.send("تقرير طويل: " + "تفاصيل كثيرة " * 20, minutes(c1, 7))
         sara.receive(long_text, minutes(c1, 8))
-        print("  ما يراه المخترق: كل الحزم بالطول نفسه تمامًا (المصافحة، والرسالة القصيرة،")
-        print("  والتقرير الطويل)، وكلها تبدو عشوائية. لا يعرف أيها مصافحة، ولا طول النص،")
-        print("  ولا رقم الرسالة أو الفترة. الطول الثابت لكل الحزم:",
-              {len(p) for p in (hs_a, hs_s, m1, long_text)})
+        dummy = ahmed.node.send_dummy(minutes(c1, 9))
+        sara.node.receive(dummy, minutes(c1, 9))
+        print("  ما يراه المخترق: المصافحة، والرسالة القصيرة، والتقرير الطويل، وحزمة وهمية فارغة،")
+        print("  كلها بالطول نفسه تمامًا وتبدو عشوائية. لا يعرف أيها مصافحة أو وهمية، ولا طول")
+        print("  النص، ولا رقم الرسالة أو الفترة. أطوال الحزم:",
+              {len(p) for p in (hs_a, hs_s, m1, long_text, dummy)})
 
         # ------------------------------------------------------------------
-        title("مفتاح لكل رسالة: ترتيب مختلف، وإعادة إرسال، وسرقة الجهاز")
+        title("مفتاح لكل رسالة وعشوائية مع كل تبادل: ترتيب مختلف، وإعادة إرسال، وسرقة الهاتف")
         m2 = ahmed.send("أحضر الوثائق معك", minutes(c1, 20))
         m3 = ahmed.send("ولا تنسَ الختم", minutes(c1, 21))
         print("  الشبكة توصل الرسالة الثانية قبل الأولى:")
@@ -179,41 +181,43 @@ def main() -> None:
         print("  المخترق يعيد إرسال رسالة سجّلها لسارة:")
         sara.receive(m2, minutes(c1, 24), "تستقبل النسخة المكررة")
 
+        theft = minutes(c1, 40)
         shutil.copy(sara.node.path, lair / "stolen_sara_node.json")
         stolen = OnlineNode.open(lair / "stolen_sara_node.json")
-        print(f"  [{stamp(minutes(c1, 40))}] المخترق يسرق نسخة من هاتف سارة المتصل، "
+        print(f"  [{stamp(theft)}] المخترق يسرق نسخة كاملة من هاتف سارة المتصل، "
               "ومعه تسجيل كل ما مر عبر الإنترنت:")
         for label, packet in (("رسالة 1", m1), ("رسالة 2", m2), ("رسالة 3", m3)):
-            attack(stolen, packet, label, minutes(c1, 41))
-        print("      ← الرسائل المقروءة لا يمكن قراءتها: مفتاح كل رسالة أُتلف لحظة قراءتها.")
-        m4 = ahmed.send("سأتأخر قليلًا", minutes(c1, 50))
-        sara.receive(m4, minutes(c1, 51))
-        attack(stolen, m4, "رسالة جديدة في الفترة نفسها", minutes(c1, 51))
-        print("      ← هذه هي النافذة الوحيدة المكشوفة: من لحظة السرقة حتى التغيير التالي.")
+            attack(stolen, packet, label, minutes(theft, 1))
+        print("      ← الرسائل المقروءة محمية: مفتاح كل رسالة أُتلف لحظة قراءتها.")
 
-        # ------------------------------------------------------------------
-        title("التغيير 2 — في موعد سري: المفتاح المسروق يفقد قيمته")
-        change(ahmed, sara, c2)
-        m5 = ahmed.send("الموعد الجديد يوم الجمعة", minutes(c2, 10))
-        sara.receive(m5, minutes(c2, 11))
-        attack(stolen, m5, "رسالة الفترة الجديدة بالجهاز المسروق", minutes(c2, 11))
+        print("  المحادثة تستمر بعد السرقة، والمخترق يحاول قراءة كل رسالة جديدة من أحمد:")
+        exchanges = (("سأتأخر قليلًا", "حسنًا"), ("هل وصلتِ؟", "نعم، أنا هنا"),
+                     ("أنا عند الباب", "أراك الآن"))
+        for i, (from_ahmed, from_sara) in enumerate(exchanges):
+            now = minutes(theft, 10 + 3 * i)
+            packet = ahmed.send(from_ahmed, now, quiet=True)
+            sara.receive(packet, now, quiet=True)
+            attack(stolen, packet, f"«{from_ahmed}»", now)
+            ahmed.receive(sara.send(from_sara, minutes(now, 1), quiet=True), minutes(now, 1), quiet=True)
+        print("      ← نجح ما دام أحمد يستعمل نصفًا من سارة وُلد قبل السرقة. وبمجرد أن وصله")
+        print("        نصف وُلد على هاتف سارة بعد السرقة، فقد المخترق القدرة نهائيًا:")
+        print("        بعد تبادلين فقط، ودون انتظار التغيير السري التالي.")
 
         # ------------------------------------------------------------------
         title("تجربة خيالية: المخترق كسر خوارزمية ChaCha20 بالكامل")
+        change(ahmed, sara, c2)
         epoch = max(ahmed.node.epochs)
         state = ahmed.node.epochs[epoch]
-        chain_before, counter = state.send_chain, state.send_counter
+        header = HEADER.pack(b"M", FORMAT_VERSION, epoch, b"A", state.dhs_public, state.pn, state.ns)
+        k_aes, k_chacha = layer_keys(chain_message_key(state.cks))      # محاكاة فقط
         m6 = ahmed.send("كلمة السر للخزانة: 7391", minutes(c2, 20))
         sara.receive(m6, minutes(c2, 21))
-        k_aes, k_chacha = layer_keys(chain_message_key(chain_before))   # محاكاة فقط
         raw = decode_packet(m6)
-        header = HEADER.pack(b"M", FORMAT_VERSION, epoch, b"A", counter)
         inner = ChaCha20Poly1305(k_chacha).decrypt(raw[:NONCE_BYTES], raw[BODY_OFFSET:], header)
         print(f"  بعد نزع طبقة ChaCha20 يجد المخترق: {inner[:20].hex()}... (طبقة AES ما زالت تحميها)")
         plain = AESGCM(k_aes).decrypt(raw[:NONCE_BYTES], inner, header)
-        (length,) = LENGTH.unpack(plain[:LENGTH.size])
-        text = plain[LENGTH.size:LENGTH.size + length].decode("utf-8")
-        print(f"  فقط لو كسر AES أيضًا في الوقت نفسه لقرأ: «{text}»")
+        size = int.from_bytes(plain[1:3], "big")
+        print(f"  فقط لو كسر AES أيضًا في الوقت نفسه لقرأ: «{plain[3:3 + size].decode()}»")
         print("  ← طبقتان بخوارزميتين مختلفتين: يجب كسر الاثنتين معًا.")
 
         # ------------------------------------------------------------------
@@ -225,9 +229,7 @@ def main() -> None:
         except VaultError:
             print("  المخترق يطلب من الخزنة المسروقة مفتاح الفترة 1: فشل ✗ (أُتلف نهائيًا)")
         print(f"  ويعرف الآن موعد التغيير القادم: {stamp(stolen_vault.next_change())}")
-        hs_a = ahmed.rotate(c3)
-        hs_s = sara.rotate(c3)
-        handshake(ahmed, hs_a, sara, hs_s, c3)
+        hs_a, hs_s = change(ahmed, sara, c3)
         m7 = ahmed.send("تم نقل الوثائق", minutes(c3, 15))
         sara.receive(m7, minutes(c3, 16))
 
@@ -240,10 +242,6 @@ def main() -> None:
             X25519PublicKey.from_public_bytes(pub_s))
         best = derive_epoch(vault_key, epoch, guess, pub_a, pub_s)
         print(f"      أفضل مفتاح يستطيع حسابه: {best.fingerprint} ≠ الحقيقي {sara.node.key_fingerprint(c3)}")
-        eve = OnlineNode(lair / "eve_node.json", role="B", epochs={epoch: EpochState(
-            valid_from=c3, valid_until=c4, hs_key=bytes(32), handshake="", my_public=b"",
-            header_key=best.header_key, recv_chain=best.chains["A"])})
-        attack(eve, m7, "رسالة ما بعد السرقة بهذا المفتاح", minutes(c3, 16))
         print("      ← ينقصه السرّ العشوائي الخاص الذي وُلد على جهاز أحمد بعد السرقة ولم يغادره.")
         print("      ⚠ لكنه بالخزنة يستطيع انتحال شخصية أحمد إذا تحكّم في الشبكة نفسها؛")
         print("        لذلك بعد أي سرقة يُعاد الاقتران، ويمكن مقارنة بصمة المفتاح بالهاتف.")
@@ -251,36 +249,25 @@ def main() -> None:
         print("  المخترق يعدّل حرفًا واحدًا في رسالة جديدة قبل وصولها:")
         m8 = ahmed.send("أراك هناك", minutes(c3, 30))
         tampered = bytearray(m8.encode())
-        tampered[700] = ord("A") if tampered[700] != ord("A") else ord("B")
+        tampered[900] = ord("A") if tampered[900] != ord("A") else ord("B")
         sara.receive(tampered.decode(), minutes(c3, 31), "تستقبل النسخة المعدّلة")
         sara.receive(m8, minutes(c3, 32), "تستقبل النسخة الأصلية ثم ")
-
-        # ------------------------------------------------------------------
-        title("التغيير 4 — هاتف سارة مطفأ: المصافحة تنتظرها")
-        hs_a = ahmed.rotate(c4)
-        try:
-            ahmed.node.send("مرحبًا", minutes(c4, 5))
-        except NodeError as error:
-            print(f"  [{stamp(minutes(c4, 5))}] أحمد يحاول الإرسال: ✗ {error}")
-        print(f"  [{stamp(minutes(c4, 60))}] سارة تشغّل هاتفها:")
-        hs_s = sara.rotate(minutes(c4, 60))
-        handshake(ahmed, hs_a, sara, hs_s, minutes(c4, 60))
-        m9 = ahmed.send("مرحبًا، هل أنتِ متاحة اليوم؟", minutes(c4, 61))
-        sara.receive(m9, minutes(c4, 62))
 
         # ------------------------------------------------------------------
         title("الخلاصة")
         for line in (
             "البذرة من ثلاثة مصادر عشوائية مستقلة (جهازان + نرد).",
             "مواعيد التغيير سرية وغير منتظمة، ومتطابقة عند الطرفين دون تواصل.",
-            "كل تغيير يضيف عشوائية جديدة (Diffie-Hellman): المفتاح المسروق يموت عند التغيير التالي.",
-            "مفتاح جديد لكل رسالة يُتلف عند قراءتها: سرقة الجهاز لا تكشف الرسائل المقروءة.",
+            "عشوائية جديدة مع كل تبادل للكلام: الهاتف المسروق يفقد قيمته بعد تبادلين.",
+            "مفتاح لكل رسالة يُتلف عند قراءتها: الرسائل المقروءة محمية حتى لو سُرق الهاتف.",
+            "حتى سرقة الخزنة لا تكفي: ينقص السارق السرّ العشوائي الذي وُلد بعد السرقة.",
             "إعادة إرسال رسالة مسجّلة تُرفض، والرسائل التي تصل بغير ترتيب تُقرأ عادي.",
             "طبقتان بخوارزميتين مختلفتين: كسر إحداهما لا يكفي.",
-            "كل الحزم بطول ثابت ومشفّرة بالكامل: لا نوع، ولا طول، ولا رقم ظاهر.",
+            "كل الحزم (حقيقية، وهمية، مصافحات) بطول ثابت ومشفّرة بالكامل.",
             "التزوير والتعديل يُكشفان ويُرفضان.",
         ):
             print(f"  ✓ {line}")
+        print("\n  للجزء الثاني (الحافلة، وما يراه المراقب، والشفاء في دقائق): python bus_demo.py")
         print()
 
 

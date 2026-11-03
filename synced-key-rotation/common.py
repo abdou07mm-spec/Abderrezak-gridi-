@@ -46,7 +46,7 @@ def secure_random(size: int, source: Callable[[int], bytes] = os.urandom) -> byt
     if not isinstance(data, bytes) or len(data) != size:
         raise RandomnessFailure("مولّد العشوائية لم يُعطِ العدد المطلوب من البايتات")
     if size >= 12:
-        if len(set(data)) < size // 4:
+        if len(set(data)) < min(size // 4, 64):
             raise RandomnessFailure(
                 "مخرجات مولّد العشوائية متشابهة بشكل غير طبيعي — توقف البرنامج احتياطًا")
         digest = hashlib.sha256(data).digest()

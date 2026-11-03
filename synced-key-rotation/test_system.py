@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 
 import online_node
+from bus import MAX_GAP, MIN_GAP, Bus, random_gap
 from common import FORMAT_VERSION, RandomnessFailure, secure_random
 from offline_vault import OfflineVault, VaultError, dice_bits, export_bundle, parse_dice
 from online_node import (
@@ -30,6 +31,7 @@ from online_node import (
     NodeError,
     OnlineNode,
     ReplayRejected,
+    PACKET_BYTES,
     chain_message_key,
     decode_packet,
     derive_epoch,
@@ -223,11 +225,14 @@ class HandshakeTest(Base):
 
     def test_secrets_are_wiped_after_handshake(self) -> None:
         self.change(0)
-        state = OnlineNode.open(self.node_a.path).epochs[1]
-        self.assertIsNone(state.vault_key)
-        self.assertIsNone(state.my_private)
-        stored = self.node_a.path.read_text()
-        self.assertNotIn("epoch_key", stored)
+        for node in (self.node_a, self.node_b):
+            state = OnlineNode.open(node.path).epochs[1]
+            self.assertIsNone(state.vault_key)
+            self.assertIsNone(state.hs_private)
+            self.assertNotIn("epoch_key", node.path.read_text())
+        # الطرف A يبدأ السقّاطة بسرّ جديد فورًا، لا بسرّ المصافحة
+        state_a = self.node_a.epochs[1]
+        self.assertNotEqual(state_a.dhs_public, state_a.hs_public)
 
     def test_stolen_vault_cannot_read_after_next_handshake(self) -> None:
         """
@@ -241,8 +246,8 @@ class HandshakeTest(Base):
         now = self.changes[1]
         self.import_both(now)
         hs_a, hs_b = self.node_a.my_handshake(now), self.node_b.my_handshake(now)
-        real_shared = X25519PrivateKey.from_private_bytes(self.node_a.epochs[2].my_private).exchange(
-            X25519PublicKey.from_public_bytes(self.node_b.epochs[2].my_public))
+        real_shared = X25519PrivateKey.from_private_bytes(self.node_a.epochs[2].hs_private).exchange(
+            X25519PublicKey.from_public_bytes(self.node_b.epochs[2].hs_public))
         self.node_b.receive(hs_a, now)
         self.node_a.receive(hs_b, now)
         real_fp = self.node_b.key_fingerprint(now)
@@ -277,6 +282,8 @@ class MessageTest(Base):
     def test_all_packets_have_identical_size(self) -> None:
         sizes = {
             len(self.node_a.my_handshake(self.now)),
+            len(self.node_a.send_dummy(later(self.now, 1))),
+            len(self.node_a.seal_packet(["a", "b", "c"], later(self.now, 1))),
             len(self.node_a.send("", later(self.now, 1))),
             len(self.node_a.send("hi", later(self.now, 1))),
             len(self.node_a.send("x" * MAX_TEXT_BYTES, later(self.now, 1))),
@@ -332,13 +339,12 @@ class MessageTest(Base):
 
     def test_two_independent_layers(self) -> None:
         state = self.node_a.epochs[1]
-        chain, counter = state.send_chain, state.send_counter
+        header = HEADER.pack(b"M", FORMAT_VERSION, 1, b"A", state.dhs_public, state.pn, state.ns)
+        k_aes, k_chacha = layer_keys(chain_message_key(state.cks))
         packet = self.node_a.send("layered", later(self.now, 1))
-        k_aes, k_chacha = layer_keys(chain_message_key(chain))
         self.assertNotEqual(k_aes, k_chacha)
         raw = decode_packet(packet)
         nonce, body = raw[:NONCE_BYTES], raw[BODY_OFFSET:]
-        header = HEADER.pack(b"M", FORMAT_VERSION, 1, b"A", counter)
         with self.assertRaises(InvalidTag):                 # مفتاح AES وحده لا يكفي
             AESGCM(k_aes).decrypt(nonce, body, header)
         inner = ChaCha20Poly1305(k_chacha).decrypt(nonce, body, header)
@@ -346,10 +352,11 @@ class MessageTest(Base):
         self.assertIn(b"layered", AESGCM(k_aes).decrypt(nonce, inner, header))
 
     def test_header_is_hidden(self) -> None:
-        packet = self.node_a.send("hidden", later(self.now, 1))
-        raw = decode_packet(packet)
-        visible = HEADER.pack(b"M", FORMAT_VERSION, 1, b"A", 0)
+        state = self.node_a.epochs[1]
+        visible = HEADER.pack(b"M", FORMAT_VERSION, 1, b"A", state.dhs_public, state.pn, state.ns)
+        raw = decode_packet(self.node_a.send("hidden", later(self.now, 1)))
         self.assertNotIn(visible, raw)
+        self.assertNotIn(state.dhs_public, raw)   # حتى النصف العام مخفي
         self.assertNotIn(b"hidden", raw)
 
     def test_too_many_skipped_messages_rejected(self) -> None:
@@ -364,7 +371,7 @@ class MessageTest(Base):
         nxt = self.change(1)
         self.assertEqual(self.node_b.receive(packet, later(nxt, 30)).text, "late")
         old_period = OnlineNode.open(self.node_a.path).epochs[1]
-        self.assertIsNone(old_period.send_chain)           # لا إرسال بفترة انتهت
+        self.assertIsNone(old_period.cks)                  # لا إرسال بفترة انتهت
 
     def test_old_period_expires_after_grace(self) -> None:
         packet = self.node_a.send("very late", later(self.changes[1], -1))
@@ -384,6 +391,207 @@ class MessageTest(Base):
         again = self.node_a.send("next", later(self.now, 3))
         self.assertEqual(OnlineNode.open(self.node_b.path).receive(again, later(self.now, 4)).text,
                          "next")
+
+
+class RatchetTest(Base):
+    """السقّاطة المزدوجة: عشوائية جديدة مع كل تبادل للكلام."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.now = self.change(0)
+
+    def at(self, minutes: int) -> datetime:
+        return later(self.now, minutes)
+
+    def test_either_side_can_send_first_even_concurrently(self) -> None:
+        from_b = self.node_b.send("B first", self.at(1))
+        from_a = self.node_a.send("A first", self.at(1))
+        self.assertEqual(self.node_a.receive(from_b, self.at(2)).text, "B first")
+        self.assertEqual(self.node_b.receive(from_a, self.at(2)).text, "A first")
+        reply = self.node_b.send("after both", self.at(3))
+        self.assertEqual(self.node_a.receive(reply, self.at(3)).text, "after both")
+
+    def test_fresh_random_half_every_turn(self) -> None:
+        halves = []
+        for turn in range(5):
+            packet = self.node_a.send(f"a{turn}", self.at(turn))
+            self.node_b.receive(packet, self.at(turn))
+            halves.append(self.node_b.epochs[1].dhs_public)
+            packet = self.node_b.send(f"b{turn}", self.at(turn))
+            self.node_a.receive(packet, self.at(turn))
+            halves.append(self.node_a.epochs[1].dhs_public)
+        self.assertEqual(len(set(halves)), len(halves))
+
+    def test_stolen_device_heals_after_round_trip(self) -> None:
+        """السارق يفقد القدرة بمجرد أن يدخل السلسلة نصف وُلد بعد السرقة."""
+        for turn in range(2):
+            self.node_b.receive(self.node_a.send(f"before {turn}", self.at(turn)), self.at(turn))
+            self.node_a.receive(self.node_b.send(f"reply {turn}", self.at(turn)), self.at(turn))
+        copy_path = self.tmp / "stolen_b.json"
+        shutil.copy(self.node_b.path, copy_path)
+        thief = OnlineNode.open(copy_path)
+        results = []
+        for turn in range(4):
+            packet = self.node_a.send(f"after {turn}", self.at(10 + turn))
+            self.node_b.receive(packet, self.at(10 + turn))
+            try:
+                results.append(thief.receive(packet, self.at(10 + turn)).text is not None)
+            except MessageRejected:
+                results.append(False)
+            self.node_a.receive(self.node_b.send(f"r{turn}", self.at(10 + turn)), self.at(10 + turn))
+        self.assertTrue(results[0])                      # النافذة: ما قبل وصول نصف جديد
+        self.assertEqual(results[2:], [False, False])    # بعدها: لا شيء، دون انتظار أي فترة
+
+    def test_late_message_from_old_chain_then_replay_rejected(self) -> None:
+        late = self.node_a.send("late", self.at(1))
+        for turn in range(3):
+            self.node_b.receive(self.node_a.send(f"a{turn}", self.at(2 + turn)), self.at(2 + turn))
+            self.node_a.receive(self.node_b.send(f"b{turn}", self.at(2 + turn)), self.at(2 + turn))
+        self.assertEqual(self.node_b.receive(late, self.at(9)).text, "late")
+        with self.assertRaises(ReplayRejected):
+            self.node_b.receive(late, self.at(10))
+
+    def test_replay_from_old_chain_rejected(self) -> None:
+        first = self.node_a.send("first", self.at(1))
+        self.node_b.receive(first, self.at(1))
+        for turn in range(2):
+            self.node_a.receive(self.node_b.send(f"b{turn}", self.at(2 + turn)), self.at(2 + turn))
+            self.node_b.receive(self.node_a.send(f"a{turn}", self.at(2 + turn)), self.at(2 + turn))
+        with self.assertRaises(ReplayRejected):
+            self.node_b.receive(first, self.at(9))
+
+    def test_tampered_ratchet_packet_leaves_state_untouched(self) -> None:
+        self.node_b.receive(self.node_a.send("hi", self.at(1)), self.at(1))
+        reply = self.node_b.send("new half inside", self.at(2))   # يحمل نصفًا جديدًا
+        before = self.node_a.epochs[1].dhs_public
+        with self.assertRaises(MessageRejected):
+            self.node_a.receive(flip(reply, 900), self.at(3))
+        self.assertEqual(self.node_a.epochs[1].dhs_public, before)
+        self.assertEqual(self.node_a.receive(reply, self.at(4)).text, "new half inside")
+
+    def test_dummy_is_silent_but_turns_the_ratchet(self) -> None:
+        self.node_b.receive(self.node_a.send("hi", self.at(1)), self.at(1))
+        half_before = self.node_a.epochs[1].dhs_public
+        result = self.node_a.receive(self.node_b.send_dummy(self.at(2)), self.at(2))
+        self.assertEqual((result.kind, result.texts), ("dummy", ()))
+        self.assertNotEqual(self.node_a.epochs[1].dhs_public, half_before)
+
+    def test_several_messages_ride_one_packet(self) -> None:
+        packet = self.node_a.seal_packet(["one", "two", "ثلاثة"], self.at(1))
+        self.assertEqual(self.node_b.receive(packet, self.at(1)).texts, ("one", "two", "ثلاثة"))
+
+    def test_thief_cannot_tell_old_dummies_from_messages(self) -> None:
+        real = self.node_a.send("real", self.at(1))
+        dummy = self.node_a.send_dummy(self.at(2))
+        header_key = self.node_b.epochs[1].header_key
+        kinds = {online_node._open_header(header_key, decode_packet(p))[:1] for p in (real, dummy)}
+        self.assertEqual(kinds, {b"M"})                  # الرأس متطابق النوع
+        for packet in (real, dummy):
+            self.node_b.receive(packet, self.at(3))
+        copy_path = self.tmp / "stolen.json"
+        shutil.copy(self.node_b.path, copy_path)
+        stolen = OnlineNode.open(copy_path)
+        for packet in (real, dummy):                     # بعد القراءة: لا يمكن فتح أي منهما
+            with self.assertRaises(MessageRejected):
+                stolen.receive(packet, self.at(4))
+
+
+class BusTest(Base):
+    """الحافلة: انطلاق في مواعيد عشوائية سواء وُجدت رسائل أم لا."""
+
+    def test_random_gaps_average_five_minutes(self) -> None:
+        gaps = [random_gap().total_seconds() / 60 for _ in range(3000)]
+        self.assertTrue(all(MIN_GAP.total_seconds() / 60 <= g <= MAX_GAP.total_seconds() / 60
+                            for g in gaps))
+        self.assertAlmostEqual(sum(gaps) / len(gaps), 5.0, delta=0.15)
+        self.assertGreater(len(set(gaps)), 2900)
+
+    def drive(self, start: datetime, end: datetime, typed=(), changes=()):
+        """محاكاة صغيرة: حافلتان، وتغييرات سرية، ورسائل تُكتب في أوقات معينة."""
+        buses = {"A": Bus.start(self.node_a, start), "B": Bus.start(self.node_b, start)}
+        nodes = {"A": self.node_a, "B": self.node_b}
+        vaults = {"A": self.vault_a, "B": self.vault_b}
+        typed, changes = sorted(typed), sorted(changes)
+        delivered = {"A": [], "B": []}
+        departures, now = [], start
+        while now < end:
+            now += timedelta(seconds=15)
+            def flush(limit: datetime) -> None:   # الأحداث بترتيبها الزمني الدقيق
+                batch = [(d, who) for who in "AB" for d in buses[who].departures_until(limit)]
+                for departure, who in sorted(batch, key=lambda item: item[0].time):
+                    departures.append((who, departure))
+                    other = "B" if who == "A" else "A"
+                    try:
+                        result = nodes[other].receive(departure.packet, departure.time)
+                        delivered[other].extend(result.texts)
+                    except MessageRejected:
+                        pass
+
+            while changes and changes[0] <= now:
+                when = changes.pop(0)
+                flush(when - timedelta(microseconds=1))
+                for who in "AB":
+                    nodes[who].import_bundle(vaults[who].release_key(when), when)
+            while typed and typed[0][0] <= now:
+                when, who, text = typed.pop(0)
+                flush(when - timedelta(microseconds=1))
+                buses[who].enqueue(text, when)
+            flush(now)
+        return buses, departures, delivered
+
+    def test_bus_departs_even_when_idle_and_all_packets_look_alike(self) -> None:
+        start = self.change(0)
+        _, departures, _ = self.drive(start, later(start, 60))
+        self.assertGreaterEqual(len(departures), 2 * 60 / 7.5 - 2)
+        self.assertEqual({len(d.packet) for _, d in departures}, {len(departures[0][1].packet)})
+        self.assertTrue(all(d.kind in ("dummy", "handshake") for _, d in departures))
+
+    def test_bus_delivers_messages_in_order_and_together(self) -> None:
+        start = self.change(0)
+        typed = [(later(start, 30), "A", "one"), (later(start, 30), "A", "two"),
+                 (later(start, 31), "B", "three"), (later(start, 45), "A", "four")]
+        buses, departures, delivered = self.drive(start, later(start, 90), typed)
+        self.assertEqual(delivered["B"], ["one", "two", "four"])
+        self.assertEqual(delivered["A"], ["three"])
+        self.assertTrue(any(d.riders == 2 for _, d in departures))
+        self.assertTrue(all(w <= MAX_GAP for w in buses["A"].waits))
+
+    def test_handshake_rides_the_bus_across_secret_change(self) -> None:
+        start = self.change(0)
+        change = self.changes[1]
+        typed = [(later(change, -20), "A", "before change"), (later(change, 1), "B", "after change"),
+                 (later(change, 30), "A", "later")]
+        _, departures, delivered = self.drive(later(change, -40), later(change, 60), typed, [change])
+        self.assertEqual(delivered["B"], ["before change", "later"])
+        self.assertEqual(delivered["A"], ["after change"])
+        kinds = [d.kind for _, d in departures if d.time >= change]
+        self.assertIn("handshake", kinds)
+        self.assertEqual(self.node_a.key_fingerprint(later(change, 60)),
+                         self.node_b.key_fingerprint(later(change, 60)))
+
+    def test_clock_going_backwards_is_handled_cleanly(self) -> None:
+        start = self.change(0)
+        change = self.changes[1]
+        self.import_both(change)                  # الفترة القديمة انتهت وأُتلفت سلسلة إرسالها
+        self.node_b.receive(self.node_a.my_handshake(change), change)
+        self.node_a.receive(self.node_b.my_handshake(change), change)
+        before = later(change, -1)               # ثم "رجعت الساعة" دقيقة إلى الوراء
+        with self.assertRaises(KeyUnavailable):
+            self.node_a.send("too late", before)
+        bus = Bus(self.node_a, before)
+        self.node_a.epochs[1].peer_confirmed = True
+        bus.enqueue("waiting", before)
+        departure = bus.departures_until(before)[0]
+        self.assertEqual(departure.kind, "noise")
+        self.assertEqual(len(bus.queue), 1)      # الرسالة لم تضِع: تنتظر الحافلة التالية
+        self.assertGreater(start, T0)
+
+    def test_bus_sends_noise_when_no_key(self) -> None:
+        bus = Bus.start(OnlineNode.open(self.tmp / "empty.json"), T0)
+        departures = bus.departures_until(later(T0, 30))
+        self.assertTrue(departures)
+        self.assertTrue(all(d.kind == "noise" for d in departures))
+        self.assertEqual({len(decode_packet(d.packet)) for d in departures}, {PACKET_BYTES})
 
 
 class PairingTest(Base):
